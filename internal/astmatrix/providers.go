@@ -1,9 +1,6 @@
 package astmatrix
 
-import (
-	"os"
-	"strings"
-)
+import "os"
 
 // Provider represents a resolved upstream provider.
 type Provider struct {
@@ -74,6 +71,7 @@ func (pr *ProviderRegistry) Get(id string) (Provider, bool) {
 	return p, ok
 }
 
+func (pr *ProviderRegistry) Providers() []Provider { return pr.All() }
 func (pr *ProviderRegistry) All() []Provider {
 	var result []Provider
 	for _, p := range pr.providers { result = append(result, p) }

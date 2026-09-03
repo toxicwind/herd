@@ -54,3 +54,4 @@ func (rl *RateLimiter) Allow(provider string) bool {
 	if !ok { return true }
 	return b.Allow()
 }
+

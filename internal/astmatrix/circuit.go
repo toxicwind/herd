@@ -79,3 +79,10 @@ func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.RLock(); defer cb.mu.RUnlock()
 	return cb.state
 }
+
+// Stats returns a snapshot of the breaker's current state, failure count,
+// and time of the most recent failure. Used by the UI status endpoint.
+func (cb *CircuitBreaker) Stats() (CircuitState, int, time.Time) {
+	cb.mu.RLock(); defer cb.mu.RUnlock()
+	return cb.state, cb.failures, cb.lastFailureTime
+}

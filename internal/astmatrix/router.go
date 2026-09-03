@@ -461,3 +461,15 @@ func (r *Router) Shutdown() {
 	r.logger.Infof("[astmatrix] shutdown")
 	r.healthDB.Close()
 }
+
+// Matrix returns the Router's view of the cloud provider matrix.
+// Used by the server startup log line that prints the configured
+// provider count. Delegates to the ProviderRegistry.
+func (r *Router) Matrix() *ProviderRegistry { return r.registry }
+
+// Close shuts down the Router and its underlying health database.
+// Alias for Shutdown, kept for the server's defer-friendly naming.
+func (r *Router) Close() error {
+	r.Shutdown()
+	return nil
+}

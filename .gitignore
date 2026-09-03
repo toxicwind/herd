@@ -18,5 +18,8 @@ coverage.out
 # Temp / scrapped scripts
 tools/
 llama-swap
+bench-orchestrator
+cmd/bench-orchestrator/bench-orchestrator
 *.bak
 *.new
+

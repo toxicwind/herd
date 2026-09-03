@@ -83,7 +83,8 @@ These changes are **not** in upstream mostlygeek. They make llama-swap a reliabl
 | 📡 | **API** | **Model-event watch fixes** | Unload/load SSE and in-memory state stay consistent when models go missing mid-flight. | `watchModelState`, tests |
 | 🔧 | **Reliability** | **IPv4 loopback default** | `localhost` → `::1` first on this host; backends bind IPv4 only → `connection refused`. Defaults use `127.0.0.1`. | `internal/config/model_config.go` |
 | 🔧 | **Reliability** | **Free stale port before spawn** | Orphan `llama-server` holds `:2500x` → next load fails. `fuser -k` on the target port before exec. | `internal/process/process_command.go` |
-| 🔧 | **Reliability** | **AST Matrix Go port** | Full port of the Python AST Matrix into Go, compiled into the binary. 193 string references, zero external runtime deps. | `internal/astmatrix/` |
+| 🔧 | **Reliability** | **AST Matrix V2 + Circuit Breaker** | Autonomous rate limiting (token bucket) + circuit breaking (5-strike failfast, 30s cooldown) with provider fallbacks. | `internal/astmatrix/circuit.go`, `ratelimit.go` |
+| ⚡ | **Benchmarking** | **Bench Orchestrator** | High-frequency throughput/latency benchmark harness & live model profile ranker. | `cmd/bench-orchestrator/`, `internal/bench/` |
 | ⚙️ | **Config** | **Filters consolidation** | Dropped broken `ModelFilters` wrapper; legacy `strip_params` YAML still works; `SanitizedCommand` / macro resolution fixed. | `internal/config/*` |
 
 ### Sovereign deployment

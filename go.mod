@@ -11,6 +11,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/klauspost/compress v1.18.5
+	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/shirou/gopsutil/v4 v4.26.4
 	github.com/stretchr/testify v1.11.1

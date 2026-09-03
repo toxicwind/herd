@@ -204,7 +204,7 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 				NoAuth:   pcfg.NoAuth,
 			}
 		}
-		cloud, err = astmatrix.NewRouter(amCfg)
+		cloud, err = astmatrix.NewRouter(amCfg, proxylog)
 		if err != nil {
 			return nil, fmt.Errorf("creating astmatrix router: %w", err)
 		}
