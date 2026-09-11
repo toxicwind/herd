@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+set -euo pipefail
+/command/s6-svwait -u /run/service/kasmvnc
+
+export WORKDIR="${KERNEL_SERVER_WORKDIR:-/mnt/agents}"
+export DISPLAY=:99
+export XAUTHORITY=/home/kimi/.Xauthority
+export HOME=/home/kimi
+export PATH=/command:/home/kimi/.local/bin:/home/kimi/.npm-global/bin:${PATH}
+
+mkdir -p ${WORKDIR}
+chown -R kimi:kimi ${WORKDIR}
+cd ${WORKDIR}
+exec /command/s6-setuidgid kimi python3 /app/kernel_server.py --host 0.0.0.0 --port 8888 --log-level info

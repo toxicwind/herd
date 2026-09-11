@@ -1,0 +1,21 @@
+{
+  "name": "sovereign-mesh",
+  "version": "1.0.0",
+  "description": "Mesh orchestration layer for herd inference routing",
+  "main": "router/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch router/index.ts",
+    "test": "echo 'mesh tests'",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.20.0",
+    "biome": "^2.0.0"
+  }
+}
