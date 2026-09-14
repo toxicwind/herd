@@ -12,10 +12,6 @@ jobs:
       LENS_SWARM_CONCURRENCY: 4
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-      - run: bun install --no-save || npm install
       - name: Analyze drift
         run: |
           node -e "
@@ -32,5 +28,4 @@ jobs:
               console.error('WARNING: Health score ' + r.healthScore + ' below threshold ' + threshold);
               process.exit(1);
             }
-          });
-          
+          });"
