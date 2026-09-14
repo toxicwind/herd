@@ -139,6 +139,18 @@ else
     log_info "LCPP_TAG: $LCPP_TAG"
 fi
 
+# Upstream prunes old build-numbered tags (ghcr.io/ggml-org/llama.cpp:server-*-bNNNN
+# come and go); if the resolved tag no longer resolves, fall back to the floating
+# tag for this backend instead of failing the build.
+FLOAT_TAG="server-${ARCH}"
+if [[ "$ARCH" == "cpu" ]]; then
+    FLOAT_TAG="server"
+fi
+if ! docker manifest inspect "${BASE_IMAGE}:${BASE_TAG}" >/dev/null 2>&1; then
+    log_info "Upstream tag ${BASE_TAG} does not resolve; falling back to floating tag ${FLOAT_TAG}"
+    BASE_TAG="${FLOAT_TAG}"
+fi
+
 if [[ ! -z "$DEBUG_ABORT_BUILD" ]]; then
     log_info "Abort: DEBUG_ABORT_BUILD set"
     exit 0

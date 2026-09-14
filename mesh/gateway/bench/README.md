@@ -427,6 +427,10 @@ refresh is `*_v3.*`, never an edit of a committed `*_v2.*` file).
 `docker-compose.yml` boots mcpproxy over the frozen reference-server config so
 the corpus and live tool list are reproducible across machines. The live
 accuracy/latency/full-schema/response-cost scorers attach to it via `-live`
+
+> 🐳 *Note:* docker-compose is used here deliberately as a frozen, reproducible benchmark
+> substrate — one of the few places a container earns its keep. For actually *running* herd,
+> go native; see the [🐳 Docker (fallback — not recommended)](../../../README.md#-docker-fallback--not-recommended) note.
 (see "Live run" above). Pin the upstream-server images before publishing
 headline numbers (image drift can change the tool corpus).
 

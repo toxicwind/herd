@@ -1,5 +1,11 @@
 # Unified Docker Container
 
+> ⚠️ **Heads up from the herd maintainers** 🐳🚫 — this Docker packaging is a
+> *fallback*, not the way. herd runs native under mise + pitchfork (or plain `go build`); containers
+> fight GPU passthrough, complicate 100GB+ model mounts, and add build/push/pull ceremony for zero
+> local benefit. Only reach for this if you cannot run the native stack. The full sermon lives in the
+> [🐳 Docker (fallback — not recommended)](../../README.md#-docker-fallback--not-recommended) section.
+
 These scripts create a custom llama-swap container that contains:
 
 - llama-server for LLMs, rerank and embedding model support
