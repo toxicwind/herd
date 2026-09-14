@@ -84,7 +84,7 @@ func TestServer_HandleListModels_Aliases(t *testing.T) {
 
 func TestServer_HandleListModels_Status(t *testing.T) {
 	local := newStubRouter(nil, "")
-	local.running = map[string]process.ProcessState{"loaded-model": process.StateReady}
+	local.setRunning(map[string]process.ProcessState{"loaded-model": process.StateReady})
 	s := newTestServer(local, newStubRouter(nil, ""))
 	s.cfg = config.Config{
 		IncludeAliasesInList: true,
@@ -231,7 +231,7 @@ func TestServer_HandleUpstream_IgnorePaths(t *testing.T) {
 
 	t.Run("matched path, model already loaded, serves normally", func(t *testing.T) {
 		local := newStubRouter([]string{"m1"}, "upstream-body")
-		local.running = map[string]process.ProcessState{"m1": process.StateReady}
+		local.setRunning(map[string]process.ProcessState{"m1": process.StateReady})
 		s := newTestServer(local, newStubRouter(nil, ""))
 		s.cfg = config.Config{
 			Models: map[string]config.ModelConfig{"m1": {}},

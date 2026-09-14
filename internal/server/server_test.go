@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 
 // stubRouter is a minimal router.LocalRouter for Server dispatch tests.
 type stubRouter struct {
+	mu            sync.RWMutex
 	models        map[string]bool
 	response      string
 	serveHTTP     func(http.ResponseWriter, *http.Request)
@@ -41,7 +43,11 @@ func newStubRouter(models []string, response string) *stubRouter {
 	return &stubRouter{models: m, response: response}
 }
 
-func (s *stubRouter) Handles(model string) bool      { return s.models[model] }
+func (s *stubRouter) Handles(model string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.models[model]
+}
 func (s *stubRouter) Shutdown(_ time.Duration) error { s.shutdownCalls.Add(1); return nil }
 func (s *stubRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.serveHTTP != nil {
@@ -52,7 +58,50 @@ func (s *stubRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(s.response))
 }
 
-func (s *stubRouter) RunningModels() map[string]process.ProcessState { return s.running }
+// RunningModels returns a snapshot copy, mirroring the production
+// baseRouter which builds a fresh map per call. Callers (e.g.
+// watchModelState) may hold the result while the test mutates the stub.
+func (s *stubRouter) RunningModels() map[string]process.ProcessState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]process.ProcessState, len(s.running))
+	for id, st := range s.running {
+		out[id] = st
+	}
+	return out
+}
+
+// setRunningModel records a model state transition (test-side simulation of
+// an on-demand load). Safe to call while watchModelState is polling.
+func (s *stubRouter) setRunningModel(id string, st process.ProcessState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running == nil {
+		s.running = make(map[string]process.ProcessState)
+	}
+	s.running[id] = st
+}
+
+// deleteRunningModel simulates an on-demand unload.
+func (s *stubRouter) deleteRunningModel(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, id)
+}
+
+// setRunning replaces the whole running set (used at test setup).
+func (s *stubRouter) setRunning(running map[string]process.ProcessState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running = running
+}
+
+// deleteModel removes a model from the served set.
+func (s *stubRouter) deleteModel(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.models, id)
+}
 func (s *stubRouter) Unload(timeout time.Duration, models ...string) {
 	s.unloadCalls.Add(1)
 	s.unloadTimeout = timeout
@@ -275,7 +324,7 @@ func TestServer_Unload(t *testing.T) {
 
 func TestServer_Running(t *testing.T) {
 	local := newStubRouter([]string{"m1"}, "")
-	local.running = map[string]process.ProcessState{"m1": process.StateReady}
+	local.setRunning(map[string]process.ProcessState{"m1": process.StateReady})
 	s := newTestServer(local, newStubRouter(nil, ""))
 	s.cfg = config.Config{Models: map[string]config.ModelConfig{
 		"m1": {

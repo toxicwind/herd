@@ -3,7 +3,6 @@ package astmatrix
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,13 +14,35 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 )
 
+// testRequest POSTs a JSON chat-completions body to the router and returns
+// the recorded response. Helper for the live KIMI suite.
+func testRequest(t *testing.T, router *Router, body map[string]interface{}) *http.Response {
+	t.Helper()
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w.Result()
+}
+
+// readBody drains a response body to a string for failure diagnostics.
+func readBody(resp *http.Response) string {
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b)
+}
+
 // TestLiveKimi tests against the real KIMI API sandbox
 func TestLiveKimi(t *testing.T) {
 	if os.Getenv("LIVE_TEST") != "1" {
 		t.Skip("Set LIVE_TEST=1 to run live tests")
 	}
 
-	logger := logmon.NewMonitor("astmatrix-live")
+	logger := logmon.NewWriter(io.Discard)
 	cfg := loadLiveConfig(t)
 	router, err := NewRouter(cfg, logger)
 	if err != nil {
@@ -207,7 +228,9 @@ func loadLiveConfig(t *testing.T) *AstMatrixConfig {
 	cfg.Defaults()
 
 	if cfg.Providers["kimi"].BaseURL == "" {
-		cfg.Providers["kimi"].BaseURL = "https://kimi-api-sandbox.msh.team/v1"
+		p := cfg.Providers["kimi"]
+		p.BaseURL = "https://kimi-api-sandbox.msh.team/v1"
+		cfg.Providers["kimi"] = p
 	}
 
 	return cfg

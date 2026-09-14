@@ -107,10 +107,13 @@ func (b *modelEventBroadcaster) broadcast(ev ModelEvent) {
 
 // statusEvent emits a terminal loaded/unloaded transition (deduped).
 func (b *modelEventBroadcaster) statusEvent(modelID, status string, exitCode *int32) {
+	b.mu.Lock()
 	if prev, ok := b.lastStatus[modelID]; ok && prev == status {
+		b.mu.Unlock()
 		return
 	}
 	b.lastStatus[modelID] = status
+	b.mu.Unlock()
 	data := &ModelEventData{Status: &status}
 	if exitCode != nil {
 		data.ExitCode = exitCode
@@ -136,7 +139,9 @@ func (b *modelEventBroadcaster) loadingEvent(modelID string, stages []string, cu
 
 // reloadEvent announces the whole list changed (config reload / preload).
 func (b *modelEventBroadcaster) reloadEvent() {
+	b.mu.Lock()
 	b.lastStatus = make(map[string]string)
+	b.mu.Unlock()
 	b.broadcast(ModelEvent{Model: "*", Event: "models_reload"})
 }
 
