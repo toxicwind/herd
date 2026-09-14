@@ -266,7 +266,13 @@ echo "=========================================="
 echo ""
 
 ROOTLESS_TAG="${DOCKER_IMAGE_TAG}-rootless"
-docker buildx build --load -t "${ROOTLESS_TAG}" - <<EOF
+# NOTE: plain `docker build` (docker driver) intentionally used here instead of
+# `docker buildx build` with the docker-container driver: the container driver
+# cannot see images in the local daemon, so `FROM ${DOCKER_IMAGE_TAG}` would
+# try to pull the tag from the registry and fail with "not found" (the push
+# step only runs after this script). The docker driver resolves the just-built
+# local image fine.
+docker build -t "${ROOTLESS_TAG}" - <<EOF
 FROM ${DOCKER_IMAGE_TAG}
 USER root
 RUN groupadd --system --gid 10001 llama-swap && \\
