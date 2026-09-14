@@ -1,0 +1,353 @@
+# .github/workflows/workflow-health.yml
+#
+# WORKFLOW HEALTH MONITOR — budget-gate vs real-failure triage for toxicwind/herd.
+#
+# Background: this account's Actions runs were dying with jobs that execute
+# ZERO steps and finish in 2-4 seconds. That is NOT a code defect — it is a
+# BILLING/SPENDING GATE. The failed job carries this check-run annotation:
+#
+#   "The job was not started because recent account payments have failed or
+#    your spending limit needs to be increased. Please check the 'Billing &
+#    plans' section in your settings"
+#
+# Signature of a budget-gated failure (vs a real one):
+#   * every job in the run has 0 steps with a started_at timestamp
+#   * run duration (updated_at - created_at) is seconds, not minutes
+#   * the failed job's check-run annotations contain the billing text above
+# A REAL_FAILURE, by contrast, has steps that actually started and ran.
+# Rule of thumb: if no step ever started, do not touch the code — check billing.
+#
+# What this workflow does (daily + on demand):
+#   1. Lists the last 10 runs of each key workflow via the GitHub API
+#      (stdlib only — no third-party actions, no checkout needed).
+#   2. Classifies each recent failure as BUDGET_GATE / REAL_FAILURE / UNKNOWN.
+#   3. Writes a markdown table to the job summary.
+#   4. Maintains ONE tracking issue ("CI health: budget-gate vs real
+#      failures"), updating it and commenting ONLY when the classification
+#      changes — no issue spam.
+#
+# Caveat: if the account billing gate is active, THIS monitor is gated too
+# (scheduled runs also need a runner). A missing monitor run is itself a
+# signal. See docs/ci-health.md for the full triage guide.
+#
+# Local test (no network): extract the python below and run with --self-test.
+
+name: Workflow Health Monitor
+
+on:
+  schedule:
+    - cron: "23 6 * * *" # daily ~06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Classify recent workflow failures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          #!/usr/bin/env python3
+          """Workflow Health Monitor: classify recent herd CI failures.
+
+          BUDGET_GATE  - 0 steps started + billing/spending-limit annotation.
+          REAL_FAILURE - at least one step started and ran.
+          UNKNOWN      - 0 steps started but the budget annotation could not be confirmed.
+          """
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+          import urllib.parse
+          from datetime import datetime, timezone
+
+          API = "https://api.github.com"
+          REPO = os.environ.get("TARGET_REPO", "toxicwind/herd")
+          TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
+          TARGET_WORKFLOWS = [
+              "Build Unified Docker Image",
+              "Build Containers",
+              "Close inactive issues",
+              "Windows CI",
+              "Linux CI",
+              "UI Tests",
+          ]
+          RUNS_PER_WORKFLOW = 10
+          MAX_BAD_RUNS_CLASSIFIED = 3
+          BAD_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
+          BUDGET_MARKERS = (
+              "spending limit",
+              "billing",
+              "payments have failed",
+              "not started because",
+          )
+          ISSUE_TITLE = "CI health: budget-gate vs real failures"
+          STATE_BEGIN = "<!-- ci-health-state:"
+          STATE_END = "-->"
+
+
+          def api(method, path, params=None, body=None):
+              url = API + path
+              if params:
+                  url += "?" + urllib.parse.urlencode(params)
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={
+                      "Authorization": "Bearer " + TOKEN,
+                      "Accept": "application/vnd.github+json",
+                      "User-Agent": "herd-ci-health-monitor/1.0",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read()
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(method + " " + path + " -> " + str(e.code) + ": " + detail[:300])
+              return json.loads(raw.decode("utf-8")) if raw else None
+
+
+          def steps_started(job):
+              return sum(1 for s in (job.get("steps") or []) if s.get("started_at"))
+
+
+          def annotation_of(job):
+              """Return the first budget-marker annotation message, '' if none, None on API error."""
+              try:
+                  anns = api("GET", "/repos/" + REPO + "/check-runs/" + str(job["id"]) + "/annotations",
+                             {"per_page": 50})
+              except RuntimeError:
+                  return None
+              for a in anns or []:
+                  msg = (a.get("message") or "")
+                  if any(m in msg.lower() for m in BUDGET_MARKERS):
+                      return msg
+              return ""
+
+
+          def classify_jobs(jobs, annotation_lookup):
+              """Pure classifier: jobs payload + annotation lookup -> (class, evidence)."""
+              started = sum(steps_started(j) for j in jobs)
+              if started > 0:
+                  return ("REAL_FAILURE",
+                          str(started) + " step(s) executed across " + str(len(jobs)) + " job(s)")
+              failed = [j for j in jobs if j.get("conclusion") in BAD_CONCLUSIONS] or jobs
+              for job in failed[:3]:
+                  note = annotation_lookup(job)
+                  if note is None:
+                      return ("UNKNOWN", "0 steps started; annotations unreadable (API error)")
+                  if note:
+                      short = note.replace("\n", " ")[:160]
+                      return ("BUDGET_GATE", "0 steps started; annotation: " + short)
+              return ("UNKNOWN", "0 steps started; no budget annotation found")
+
+
+          def classify_run(run):
+              jobs = api("GET", "/repos/" + REPO + "/actions/runs/" + str(run["id"]) + "/jobs",
+                         {"per_page": 30}).get("jobs", [])
+              return classify_jobs(jobs, annotation_of)
+
+
+          def run_link(run):
+              url = run.get("html_url", "")
+              return "[#" + str(run["id"]) + "](" + url + ")" if url else "#" + str(run["id"])
+
+
+          def build_rows():
+              wfs = api("GET", "/repos/" + REPO + "/actions/workflows",
+                        {"per_page": 100}).get("workflows", [])
+              rows = []
+              state = {}
+              for name in TARGET_WORKFLOWS:
+                  wf = next((w for w in wfs if w["name"] == name), None)
+                  if wf is None:
+                      rows.append((name, "n/a", "UNKNOWN", "workflow not found in repo"))
+                      state[name] = {"latest_run": None, "class": "UNKNOWN"}
+                      continue
+                  runs = api("GET", "/repos/" + REPO + "/actions/workflows/" + str(wf["id"]) + "/runs",
+                             {"per_page": RUNS_PER_WORKFLOW}).get("workflow_runs", [])
+                  bad = [r for r in runs if r.get("conclusion") in BAD_CONCLUSIONS]
+                  if not bad:
+                      latest = runs[0] if runs else None
+                      rows.append((name, run_link(latest) if latest else "n/a", "OK",
+                                   "no failures in last " + str(RUNS_PER_WORKFLOW) + " runs"))
+                      state[name] = {"latest_run": latest["id"] if latest else None, "class": "OK"}
+                      continue
+                  first_cls = None
+                  for run in bad[:MAX_BAD_RUNS_CLASSIFIED]:
+                      try:
+                          cls, evidence = classify_run(run)
+                      except RuntimeError as e:
+                          cls, evidence = "UNKNOWN", "API error: " + str(e)[:160]
+                      if first_cls is None:
+                          first_cls = cls
+                      rows.append((name, run_link(run) + " (" + str(run.get("conclusion")) + ")",
+                                   cls, evidence))
+                  state[name] = {"latest_run": bad[0]["id"], "class": first_cls}
+              return rows, state
+
+
+          def table_md(rows, checked_at):
+              lines = ["| Workflow | Run | Classification | Evidence |",
+                       "|---|---|---|---|"]
+              for name, link, cls, ev in rows:
+                  lines.append("| " + name + " | " + link + " | **" + cls + "** | " + ev + " |")
+              lines.append("")
+              lines.append("_Checked " + checked_at + " · last " + str(RUNS_PER_WORKFLOW) +
+                           " runs per workflow · BUDGET_GATE = billing/spending gate, not a code defect._")
+              return "\n".join(lines)
+
+
+          def read_state(body):
+              if not body or STATE_BEGIN not in body:
+                  return None
+              try:
+                  blob = body.split(STATE_BEGIN, 1)[1].split(STATE_END, 1)[0]
+                  return json.loads(blob)
+              except (ValueError, json.JSONDecodeError):
+                  return None
+
+
+          def find_issue():
+              issues = api("GET", "/repos/" + REPO + "/issues",
+                           {"state": "open", "per_page": 100})
+              for i in issues or []:
+                  if i.get("title") == ISSUE_TITLE and "pull_request" not in i:
+                      return i
+              return None
+
+
+          def changed_workflows(old, new):
+              out = []
+              for name in TARGET_WORKFLOWS:
+                  o = (old or {}).get(name, {})
+                  n = new.get(name, {})
+                  if o.get("class") != n.get("class") or o.get("latest_run") != n.get("latest_run"):
+                      out.append(name + ": " + str(o.get("class")) + " -> " + str(n.get("class")))
+              return out
+
+
+          def issue_body(table, state):
+              return ("# " + ISSUE_TITLE + "\n\n"
+                      "Auto-maintained by the **Workflow Health Monitor** "
+                      "(`.github/workflows/workflow-health.yml`). Updated only when the "
+                      "classification of recent failures changes.\n\n"
+                      "## Latest snapshot\n\n" + table + "\n\n"
+                      "### How to read this\n\n"
+                      "- **BUDGET_GATE** — jobs died with 0 steps started and the billing / "
+                      "spending-limit annotation. Fix in account Billing settings, not in code.\n"
+                      "- **REAL_FAILURE** — steps actually executed and failed. Investigate the code.\n"
+                      "- **UNKNOWN** — 0 steps started but the budget annotation could not be "
+                      "confirmed; check the run manually.\n\n"
+                      "Full triage guide: `docs/ci-health.md`.\n\n"
+                      + STATE_BEGIN + json.dumps(state, sort_keys=True) + STATE_END + "\n")
+
+
+          def sync_issue(table, state, changes):
+              issue = find_issue()
+              old = read_state(issue.get("body") if issue else None)
+              if old == state:
+                  return "unchanged"
+              body = issue_body(table, state)
+              if issue:
+                  num = issue["number"]
+                  api("PATCH", "/repos/" + REPO + "/issues/" + str(num), {"body": body})
+                  api("POST", "/repos/" + REPO + "/issues/" + str(num) + "/comments",
+                      {"body": "Classification changed:\n\n" + "\n".join("- " + c for c in changes) +
+                               "\n\n" + table})
+                  return "updated issue #" + str(num)
+              created = api("POST", "/repos/" + REPO + "/issues",
+                            {"title": ISSUE_TITLE, "body": body})
+              return "created issue #" + str(created["number"])
+
+
+          def self_test():
+              budget_job = {"id": 1, "conclusion": "failure", "steps": []}
+              real_job = {"id": 2, "conclusion": "failure",
+                          "steps": [{"started_at": "2026-01-01T00:00:01Z"},
+                                     {"started_at": "2026-01-01T00:00:02Z"}]}
+              unknown_job = {"id": 3, "conclusion": "failure", "steps": []}
+              cases = [
+                  ("budget gate",
+                   classify_jobs([budget_job],
+                                 lambda j: "The job was not started because recent account "
+                                           "payments have failed or your spending limit needs "
+                                           "to be increased."),
+                   "BUDGET_GATE"),
+                  ("real failure",
+                   classify_jobs([real_job], lambda j: ""),
+                   "REAL_FAILURE"),
+                  ("unknown, no annotation",
+                   classify_jobs([unknown_job], lambda j: ""),
+                   "UNKNOWN"),
+                  ("unknown, api error",
+                   classify_jobs([unknown_job], lambda j: None),
+                   "UNKNOWN"),
+                  ("cancelled, 0 steps, budget text",
+                   classify_jobs([{"id": 4, "conclusion": "cancelled", "steps": []}],
+                                 lambda j: "spending limit needs to be increased"),
+                   "BUDGET_GATE"),
+              ]
+              failed = 0
+              for label, (cls, ev), want in cases:
+                  ok = cls == want
+                  failed += (not ok)
+                  print(("PASS" if ok else "FAIL") + " [" + label + "] -> " + cls +
+                        (" | " + ev[:80] if not ok else ""))
+              # state roundtrip
+              st = {"Linux CI": {"latest_run": 123, "class": "BUDGET_GATE"}}
+              body = issue_body("| t |", st)
+              rt = read_state(body)
+              ok = rt == st
+              failed += (not ok)
+              print(("PASS" if ok else "FAIL") + " [state roundtrip]")
+              print("self-test: " + ("ALL PASS" if failed == 0 else str(failed) + " FAILURES"))
+              return 1 if failed else 0
+
+
+          def main():
+              if "--self-test" in sys.argv:
+                  sys.exit(self_test())
+              if not TOKEN:
+                  print("GH_TOKEN/GITHUB_TOKEN is empty; nothing to do.", file=sys.stderr)
+                  sys.exit(1)
+              checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+              rows, state = build_rows()
+              table = table_md(rows, checked_at)
+              summary = "## Workflow Health Monitor\n\n" + table + "\n"
+              out = os.environ.get("GITHUB_STEP_SUMMARY")
+              if out:
+                  with open(out, "a", encoding="utf-8") as f:
+                      f.write(summary)
+              else:
+                  print(summary)
+              try:
+                  changes = changed_workflows(read_state((find_issue() or {}).get("body")), state)
+                  # find_issue called twice; cheap and keeps logic simple
+                  result = sync_issue(table, state, changes)
+              except RuntimeError as e:
+                  result = "issue sync skipped: " + str(e)[:160]
+              print("issue sync: " + result)
+              # Fail the job ONLY on real failures so budget gates stay visible but silent.
+              real = [r for r in rows if r[2] == "REAL_FAILURE"]
+              if real:
+                  print("::error::" + str(len(real)) + " REAL_FAILURE classification(s) need investigation")
+                  sys.exit(1)
+              print("done: no REAL_FAILURE classifications.")
+
+
+          main()
+          PYEOF
