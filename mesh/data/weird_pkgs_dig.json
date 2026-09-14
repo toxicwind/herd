@@ -1,0 +1,54 @@
+{
+  "magika": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/magika/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/magika"
+    ]
+  },
+  "chess": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/chess/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/chess"
+    ]
+  },
+  "FXrays": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/FXrays/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/FXrays"
+    ]
+  },
+  "knot_floer_homology": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/knot_floer_homology/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/knot_floer_homology"
+    ]
+  },
+  "snappy": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/snappy/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/snappy"
+    ]
+  },
+  "qutip": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/qutip/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/qutip"
+    ]
+  },
+  "manim": {
+    "found": true,
+    "origin": "/usr/local/lib/python3.12/dist-packages/manim/__init__.py",
+    "submodule_search": [
+      "/usr/local/lib/python3.12/dist-packages/manim"
+    ]
+  },
+  "MIDIUtil": {
+    "found": false
+  }
+}
