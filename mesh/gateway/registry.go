@@ -36,6 +36,8 @@ func (pr *ProviderRegistry) All() []*Provider {
 	pr.mu.RLock()
 	defer pr.mu.RUnlock()
 	out := make([]*Provider, 0, len(pr.providers))
-	for _, p := range pr.providers { out = append(out, p) }
+	for _, p := range pr.providers {
+		out = append(out, p)
+	}
 	return out
 }

@@ -6,6 +6,7 @@ import (
 )
 
 type CircuitState int
+
 const (
 	StateClosed CircuitState = iota
 	StateOpen
@@ -13,28 +14,28 @@ const (
 )
 
 type CircuitBreaker struct {
-	state          CircuitState
-	failureCount   int
-	successCount   int
+	state            CircuitState
+	failureCount     int
+	successCount     int
 	failureThreshold int
 	halfOpenMaxCalls int
-	timeout        time.Duration
-	lastFailure    time.Time
-	mu             sync.RWMutex
+	timeout          time.Duration
+	lastFailure      time.Time
+	mu               sync.RWMutex
 }
 
 type CircuitRegistry struct {
-	mu       sync.Mutex
-	breakers map[string]*CircuitBreaker
+	mu               sync.Mutex
+	breakers         map[string]*CircuitBreaker
 	failureThreshold int
-	timeout  time.Duration
+	timeout          time.Duration
 }
 
 func NewCircuitRegistry(failureThreshold int, timeout time.Duration) *CircuitRegistry {
 	return &CircuitRegistry{
-		breakers: make(map[string]*CircuitBreaker),
+		breakers:         make(map[string]*CircuitBreaker),
 		failureThreshold: failureThreshold,
-		timeout: timeout,
+		timeout:          timeout,
 	}
 }
 
@@ -44,17 +45,17 @@ func (cr *CircuitRegistry) get(name string) *CircuitBreaker {
 	cb, ok := cr.breakers[name]
 	if !ok {
 		cb = &CircuitBreaker{
-			state: StateClosed,
+			state:            StateClosed,
 			failureThreshold: cr.failureThreshold,
 			halfOpenMaxCalls: 3,
-			timeout: cr.timeout,
+			timeout:          cr.timeout,
 		}
 		cr.breakers[name] = cb
 	}
 	return cb
 }
 
-func (cr *CircuitRegistry) Allow(name string) bool { return cr.get(name).Allow() }
+func (cr *CircuitRegistry) Allow(name string) bool    { return cr.get(name).Allow() }
 func (cr *CircuitRegistry) RecordSuccess(name string) { cr.get(name).RecordSuccess() }
 func (cr *CircuitRegistry) RecordFailure(name string) { cr.get(name).RecordFailure() }
 

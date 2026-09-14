@@ -107,21 +107,21 @@ type UIActivityConfig struct {
 
 // AstMatrixConfig configures the AST Matrix cloud router.
 type AstMatrixConfig struct {
-	Enabled     bool                     `yaml:"enabled"`
-	Strategy    string                   `yaml:"strategy"`
-	MaxParallel int                      `yaml:"maxParallel"`
-	DbPath      string                   `yaml:"dbPath"`
-	StickyTTL   int                      `yaml:"stickyTtl"`
-	FifoMax     int                      `yaml:"fifoMax"`
-	Providers   map[string]ProviderCfg   `yaml:"providers"`
+	Enabled     bool                   `yaml:"enabled"`
+	Strategy    string                 `yaml:"strategy"`
+	MaxParallel int                    `yaml:"maxParallel"`
+	DbPath      string                 `yaml:"dbPath"`
+	StickyTTL   int                    `yaml:"stickyTtl"`
+	FifoMax     int                    `yaml:"fifoMax"`
+	Providers   map[string]ProviderCfg `yaml:"providers"`
 }
 
 // ProviderCfg is per-provider configuration in the AST Matrix.
 type ProviderCfg struct {
-	BaseURL  string `yaml:"baseUrl"`
-	KeyEnv   string `yaml:"keyEnv"`
+	BaseURL   string `yaml:"baseUrl"`
+	KeyEnv    string `yaml:"keyEnv"`
 	KeyEnvAlt string `yaml:"keyEnvAlt"`
-	NoAuth   bool   `yaml:"noAuth"`
+	NoAuth    bool   `yaml:"noAuth"`
 }
 
 func (a *AstMatrixConfig) Defaults() {
@@ -161,32 +161,32 @@ func (c *ProfileConfig) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type Config struct {
-	HealthCheckTimeout int                      `yaml:"healthCheckTimeout"`
-	LogRequests        bool                     `yaml:"logRequests"`
-	LogLevel           string                   `yaml:"logLevel"`
-	LogTimeFormat      string                   `yaml:"logTimeFormat"`
-	LogToStdout        string                   `yaml:"logToStdout"`
-	MetricsMaxInMemory int                      `yaml:"metricsMaxInMemory"`
-	CaptureBuffer      int                      `yaml:"captureBuffer"`
-	Store              *Store                   `yaml:"store"`
-	UI                 UIConfig                 `yaml:"ui"`
-	Performance        PerformanceConfig        `yaml:"performance"`
-	GlobalTTL          int                      `yaml:"globalTTL"`
-	UnloadTimeout      int                      `yaml:"unloadTimeout"`
-	Models             map[string]ModelConfig   `yaml:"models"`
-	Profiles           map[string]ProfileConfig `yaml:"profiles"`
-	Routing            RoutingConfig            `yaml:"routing"`
-	Groups             map[string]GroupConfig   `yaml:"groups"`
-	Matrix             *MatrixConfig            `yaml:"matrix"`
-	Macros             MacroList                `yaml:"macros"`
-	aliases            map[string]string
-	StartPort          int                      `yaml:"startPort"`
-	Hooks              HooksConfig              `yaml:"hooks"`
-	SendLoadingState   bool                     `yaml:"sendLoadingState"`
-	IncludeAliasesInList bool                   `yaml:"includeAliasesInList"`
-	RequiredAPIKeys    []string                 `yaml:"apiKeys"`
-	Peers              PeerDictionaryConfig     `yaml:"peers"`
-	Upstream           UpstreamConfig           `yaml:"upstream"`
+	HealthCheckTimeout   int                      `yaml:"healthCheckTimeout"`
+	LogRequests          bool                     `yaml:"logRequests"`
+	LogLevel             string                   `yaml:"logLevel"`
+	LogTimeFormat        string                   `yaml:"logTimeFormat"`
+	LogToStdout          string                   `yaml:"logToStdout"`
+	MetricsMaxInMemory   int                      `yaml:"metricsMaxInMemory"`
+	CaptureBuffer        int                      `yaml:"captureBuffer"`
+	Store                *Store                   `yaml:"store"`
+	UI                   UIConfig                 `yaml:"ui"`
+	Performance          PerformanceConfig        `yaml:"performance"`
+	GlobalTTL            int                      `yaml:"globalTTL"`
+	UnloadTimeout        int                      `yaml:"unloadTimeout"`
+	Models               map[string]ModelConfig   `yaml:"models"`
+	Profiles             map[string]ProfileConfig `yaml:"profiles"`
+	Routing              RoutingConfig            `yaml:"routing"`
+	Groups               map[string]GroupConfig   `yaml:"groups"`
+	Matrix               *MatrixConfig            `yaml:"matrix"`
+	Macros               MacroList                `yaml:"macros"`
+	aliases              map[string]string
+	StartPort            int                  `yaml:"startPort"`
+	Hooks                HooksConfig          `yaml:"hooks"`
+	SendLoadingState     bool                 `yaml:"sendLoadingState"`
+	IncludeAliasesInList bool                 `yaml:"includeAliasesInList"`
+	RequiredAPIKeys      []string             `yaml:"apiKeys"`
+	Peers                PeerDictionaryConfig `yaml:"peers"`
+	Upstream             UpstreamConfig       `yaml:"upstream"`
 	// AstMatrix configures the AST Matrix cloud router.
 	// When enabled, cloud model requests are routed through the matrix
 	// to remote providers (openrouter, nvidia, groq, google, etc.).

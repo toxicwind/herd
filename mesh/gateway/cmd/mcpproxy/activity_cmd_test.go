@@ -861,10 +861,10 @@ func TestOutputActivityError_TableFormat(t *testing.T) {
 
 func TestFormatSensitiveDataIndicator(t *testing.T) {
 	tests := []struct {
-		name        string
-		activity    map[string]interface{}
-		noIcons     bool
-		expected    string
+		name     string
+		activity map[string]interface{}
+		noIcons  bool
+		expected string
 	}{
 		{
 			name:     "no metadata",

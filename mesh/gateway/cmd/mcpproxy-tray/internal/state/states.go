@@ -305,7 +305,7 @@ func CanTransition(from, to State) bool {
 			StateShuttingDown,
 		},
 		StateCoreRecoveringDocker: {
-			StateLaunchingCore, // Launch core after Docker recovery
+			StateLaunchingCore,   // Launch core after Docker recovery
 			StateCoreErrorDocker, // Back to error if Docker fails again
 			StateShuttingDown,
 		},

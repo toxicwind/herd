@@ -198,10 +198,10 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		amCfg.Providers = make(map[string]astmatrix.ProviderCfg)
 		for name, pcfg := range cfg.AstMatrix.Providers {
 			amCfg.Providers[name] = astmatrix.ProviderCfg{
-				BaseURL:  pcfg.BaseURL,
-				KeyEnv:   pcfg.KeyEnv,
+				BaseURL:   pcfg.BaseURL,
+				KeyEnv:    pcfg.KeyEnv,
 				KeyEnvAlt: pcfg.KeyEnvAlt,
-				NoAuth:   pcfg.NoAuth,
+				NoAuth:    pcfg.NoAuth,
 			}
 		}
 		cloud, err = astmatrix.NewRouter(amCfg, proxylog)

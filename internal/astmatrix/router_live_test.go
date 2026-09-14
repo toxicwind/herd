@@ -36,8 +36,8 @@ func TestLiveKimi(t *testing.T) {
 	// Test 1: KIMI completion
 	t.Run("KimiCompletion", func(t *testing.T) {
 		body := map[string]interface{}{
-			"model":    "kimi-auto",
-			"messages": []map[string]string{{"role": "user", "content": "Say hello in 3 words"}},
+			"model":      "kimi-auto",
+			"messages":   []map[string]string{{"role": "user", "content": "Say hello in 3 words"}},
 			"max_tokens": 50,
 		}
 		resp := testRequest(t, router, body)
@@ -55,9 +55,9 @@ func TestLiveKimi(t *testing.T) {
 	// Test 2: KIMI streaming
 	t.Run("KimiStreaming", func(t *testing.T) {
 		body := map[string]interface{}{
-			"model":    "kimi-fast",
-			"messages": []map[string]string{{"role": "user", "content": "Count 1,2,3"}},
-			"stream":   true,
+			"model":      "kimi-fast",
+			"messages":   []map[string]string{{"role": "user", "content": "Count 1,2,3"}},
+			"stream":     true,
 			"max_tokens": 100,
 		}
 		resp := testRequest(t, router, body)
@@ -110,8 +110,8 @@ func TestLiveKimi(t *testing.T) {
 		}
 
 		body := map[string]interface{}{
-			"model":    "openrouter/auto",
-			"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+			"model":      "openrouter/auto",
+			"messages":   []map[string]string{{"role": "user", "content": "Hello"}},
 			"max_tokens": 50,
 		}
 		resp := testRequest(t, router, body)

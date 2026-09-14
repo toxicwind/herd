@@ -96,11 +96,11 @@ func NewHealthMonitor(endpoint string, logger *zap.SugaredLogger, stateMachine *
 	}
 
 	return &HealthMonitor{
-		baseURL:       strings.TrimSuffix(transformedBaseURL, "/"),
-		logger:        logger,
-		stateMachine:  stateMachine,
-		currentStatus: HealthStatusUnknown,
-		httpClient:    httpClient,
+		baseURL:          strings.TrimSuffix(transformedBaseURL, "/"),
+		logger:           logger,
+		stateMachine:     stateMachine,
+		currentStatus:    HealthStatusUnknown,
+		httpClient:       httpClient,
 		resultsCh:        make(chan HealthCheck, 10),
 		shutdownCh:       make(chan struct{}),
 		ctx:              ctx,
