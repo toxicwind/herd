@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 
 PORT = int(os.getenv("FREE_GATEWAY_PORT", "19280"))
-DB_PATH = os.getenv("FREE_GATEWAY_DB", "/tmp/free_zed_gateway.db")
+DB_PATH = os.getenv("FREE_GATEWAY_DB", "/home/toxic/sovereign/data/free_zed_gateway.db")
 STICKY_TTL = 1800  # 30 min like the sources
 MAX_FALLBACKS = 8
 

@@ -27,9 +27,9 @@ hooks:
     preload:
       - beellama/exaone-4-0-1-2b-iq4xs
   on_model_loaded:
-    exec: 'echo "[$(date)] MODEL_LOADED: $MODEL" >> /tmp/llama-swap-events.log'
+    exec: 'echo "[$(date)] MODEL_LOADED: $MODEL" >> /home/toxic/sovereign/data/herd-events.log'
   on_model_unloaded:
-    exec: 'echo "[$(date)] MODEL_UNLOADED: $MODEL" >> /tmp/llama-swap-events.log'
+    exec: 'echo "[$(date)] MODEL_UNLOADED: $MODEL" >> /home/toxic/sovereign/data/herd-events.log'
 
 # -----------------------------------------------------------------------------
 # ROUTING MATRIX (auto-populated by autoscan)
