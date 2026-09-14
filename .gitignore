@@ -23,3 +23,6 @@ cmd/bench-orchestrator/bench-orchestrator
 *.bak
 *.new
 
+
+# Local llama-server engine builds (third-party sources + binaries, not committed)
+engines/
