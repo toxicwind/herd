@@ -1,66 +1,116 @@
-# llama-swap (sovereign runtime)
+# herd
 
-This directory is the **runtime home** for the inference front door — not a second source tree.
+[![Unified Docker](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml/badge.svg)](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml)
 
-| Path                 | Role                                                                                    |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `llama-swap`         | Symlink → `/home/toxic/projects/llama-swap-main/llama-swap` (**toxicwind fork** binary) |
-| `config.yaml`        | Live config (RTX 3090 / sm_86, routing matrix, macros for 4 llama.cpp forks)            |
-| `MODEL_INVENTORY.md` | Local GGUF / model-id audit for this host                                               |
-| `ollama-proxy`       | Optional sibling symlink (legacy)                                                       |
+> **herd** — run a whole herd of LLM backends behind one OpenAI-compatible API.
 
-## Source of truth for code
+herd is a fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap) (upstream), extended with
+herd-specific infrastructure: our own unified Docker images, AST Matrix V2 smart routing, an agentic lens
+suite, and hardening fixes for real-world deployments. The fork keeps upstream's core (swap models in and
+out of VRAM on demand, OpenAI-compatible endpoints) and layers herd's production tooling on top.
 
-|               |                                                            |
-| ------------- | ---------------------------------------------------------- |
-| **Fork repo** | https://github.com/toxicwind/llama-swap                    |
-| **Upstream**  | https://github.com/mostlygeek/llama-swap                   |
-| **Checkout**  | `/home/toxic/projects/llama-swap-main`                     |
-| **Fork docs** | Read **“Fork additions”** in that repo’s `README.md` first |
+## Quickstart
 
-Do **not** treat this README as upstream documentation. Upstream feature list + install lives in the fork checkout README (with our additions called out at the top).
+```bash
+git clone https://github.com/toxicwind/herd.git
+cd herd
+make clean all        # or: go build -o herd .
+```
+
+Create a config (see upstream docs for the full schema) and run:
+
+```bash
+./herd --config config.yaml --listen 127.0.0.1:8080
+```
 
 ## Why a fork
 
-Sovereign clients (Zed llama.cpp provider, OpenFang `provider = "llama"`, Grok, IDE oaicopilot) need:
+Sovereign clients need things upstream doesn't provide:
 
 1. Stable **OpenAI-compatible streaming** even when backends differ → `normalize_sse`
-2. **Model discovery events** for Zed → `GET /models/sse`
-3. Reliable restarts when orphan `llama-server` holds ports → pre-spawn `fuser -k`
-4. **IPv4 loopback** defaults (`127.0.0.1`) so dual-stack `localhost` does not break dial
+2. **Model discovery events** for Zed → `GET /models/sse` (`internal/server/models_sse.go`)
+3. Reliable restarts when an orphan `llama-server` holds a port → pre-spawn `fuser -k` (`internal/process/process_command.go`)
+4. **IPv4 loopback** defaults (`127.0.0.1`) so dual-stack `localhost` does not break dial (`internal/config/model_config.go`)
 
-## Ports (SSOT: `config/ports.env`)
+## What's different from upstream
 
-| Env                                 | Port        | Surface                     |
-| ----------------------------------- | ----------- | --------------------------- |
-| `LLAMA_SWAP_PORT`                   | **25100**   | Proxy + `/ui` + `/v1`       |
+| Area | herd |
+|---|---|
+| Docker images | Own unified images: `ghcr.io/toxicwind/herd:unified-<backend>` (see below) |
+| Routing | AST Matrix V2: token-bucket rate limiting + 5-strike circuit breaker (30s cooldown), 8 routing strategies |
+| Providers | 13 built-in providers with base URLs (`internal/astmatrix/providers.go`) |
+| SSE | `GET /models/sse` synthesized for Zed; SSE normalization via `normalize_sse` |
+| Networking | IPv4 loopback default `127.0.0.1` (avoids localhost→::1 breakage) |
+| Process mgmt | Frees stale ports with `fuser -k` before spawning backends |
+| Sovereign | Built-in sovereign provider at `http://127.0.0.1:25100/v1` |
+| Lenses | Agentic lens suite (stylometric authorship, OSINT infra recon, crypto leak detection) |
+| Bench | Bench orchestrator in `internal/bench/orchestrator.go` |
+
+### AST Matrix V2
+
+Smart routing layer in `internal/astmatrix/` (stdlib-only, zero external dependencies). Full details in
+[README_ASTMATRIX_V2.md](README_ASTMATRIX_V2.md).
+
+- **Rate limiting:** token bucket (`ratelimit.go`)
+- **Circuit breaker:** 5-strike, 30s cooldown (`circuit.go`)
+- **Strategies (8):** `hybrid`, `ast_race`, `sticky_affinity`, `weighted_elo`, `least_latency`, `round_robin`, `free`, `circuit_chain`
+- **Endpoints:** `/astmatrix/status`, `/astmatrix/metrics`
+
+```yaml
+astMatrix:
+  astStrategy: hybrid
+  requestTimeout: 30s
+  maxRetries: 3
+  healthProbeInterval: 10s
+  enableCoalescing: true
+```
+
+## Ports
+
+| Env | Port | Surface |
+|---|---|---|
+| `LLAMA_SWAP_PORT` | **25100** | Proxy + `/ui` + `/v1` |
 | `LLAMA_START_PORT`–`LLAMA_END_PORT` | 25001–25099 | Backend slots owned by swap |
 
 Health: `curl -sS http://127.0.0.1:25100/health` → `OK`
 
-## Operate
+## Unified Docker images
 
-```text
-# via sovereign stack
-cd /home/toxic/sovereign && mise run up     # includes llama-swap module
-mise run restart-llama
-mise run health
+herd publishes its own images (not upstream's):
 
-# binary only
-/home/toxic/sovereign/tools/llama-swap/llama-swap \
-  -config /home/toxic/sovereign/tools/llama-swap/config.yaml \
-  -listen 127.0.0.1:25100
+```
+ghcr.io/toxicwind/herd:unified-<backend>
 ```
 
-## Rebuild fork binary
+Built by `docker/unified/build-image.sh`, published by `.github/workflows/unified-docker.yml`.
 
-```text
-cd /home/toxic/projects/llama-swap-main
-go build -o llama-swap .
-# symlink already points here
+> **Rootless build note (2026-09-14):** the rootless build stage must use plain `docker build`
+> (docker driver), **not** the buildx container driver — otherwise
+> `FROM ghcr.io/toxicwind/herd:unified-<backend>` fails to resolve the local tag. Nightly unified
+> builds were failing for a week before this was fixed.
+
+## Agentic lens suite
+
+`src/_11ty/lenses/*.js` + `lib/lens-orchestrator.js`, run by `.github/workflows/tectonic-drift.yml`:
+
+- Stylometric authorship analysis
+- OSINT infrastructure reconnaissance
+- Cryptographic leak detection
+- Tectonic drift lenses
+
+Configure via `.env.example`.
+
+## Bench orchestrator
+
+`internal/bench/orchestrator.go` — benchmark orchestration for backends/strategies.
+
+## Remotes
+
+```bash
+git remote -v
+# origin    https://github.com/toxicwind/herd.git (fetch)
+# origin    https://github.com/toxicwind/herd.git (push)
+# upstream  https://github.com/mostlygeek/llama-swap.git (fetch)
 ```
 
-## Related
-
-- Stack rules: `/home/toxic/sovereign/AGENTS.md` (via `~/.grok/AGENTS.md`) — **no vLLM**
-- Ops dashboard (rust-web): `http://127.0.0.1:25101/` — APIs under `/ops/api/*`
+herd tracks upstream `mostlygeek/llama-swap`; fork-specific work lives on `main` here.
