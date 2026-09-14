@@ -212,7 +212,9 @@ if [[ "$NO_CACHE" == true ]]; then
     BUILD_ARGS+=(--no-cache)
     echo "Note: Building without cache"
 elif [[ "${GITHUB_ACTIONS:-}" == "true" && "${ACT:-}" != "true" ]]; then
-    CACHE_REF="ghcr.io/mostlygeek/llama-swap:unified-${BACKEND}-cache"
+    # Derive the cache repo from the image tag so forked CI pushes cache to
+    # the fork's own ghcr.io namespace instead of upstream's (which 403s).
+    CACHE_REF="${DOCKER_IMAGE_TAG%:*}:unified-${BACKEND}-cache"
     BUILD_ARGS+=(
         --cache-from "type=registry,ref=${CACHE_REF}"
         --cache-to "type=registry,ref=${CACHE_REF},mode=max"
