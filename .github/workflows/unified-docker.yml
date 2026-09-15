@@ -96,20 +96,30 @@ jobs:
           AUDIO_REF: ${{ inputs.audio_ref || 'main' }}
           IK_LLAMA_REF: ${{ inputs.ik_llama_ref || 'main' }}
           LS_VERSION: ${{ inputs.llama_swap_version || 'main' }}
-          DOCKER_IMAGE_TAG: ghcr.io/${{ github.repository }}:unified-${{ matrix.backend }}
-          # When running under act, use the local builder that has warm ccache.
-          # On GitHub Actions, BUILDX_BUILDER is unset so docker uses the builder
-          # created by setup-buildx-action above.
-          BUILDX_BUILDER: ${{ env.ACT == 'true' && 'llama-swap-builder' || '' }}
         run: |
           chmod +x docker/unified/build-image.sh
-          docker/unified/build-image.sh --cuda --resolve | tee -a "$GITHUB_OUTPUT"
+          # --resolve prints only name=value lines on stdout (human progress
+          # goes to stderr), so appending stdout to GITHUB_OUTPUT is safe.
+          # It performs no Docker build; a previous version piped the full
+          # build log into GITHUB_OUTPUT and broke this step.
+          docker/unified/build-image.sh --cuda --resolve >> "$GITHUB_OUTPUT"
 
       - name: Plan backends
         id: plan
+        env:
+          BUILD_CUDA: ${{ inputs.build_cuda }}
+          BUILD_VULKAN: ${{ inputs.build_vulkan }}
+          PUSH_TO_GHCR: ${{ inputs.push_to_ghcr }}
         run: |
-          BASE_TAG="ghcr.io/${{ github.repository }}:unified-${{ matrix.backend }}"
-          DATE_TAG=$(date -u +%Y-%m-%d)
+          # Boolean dispatch inputs render empty on the schedule trigger, so
+          # default them to true here; an explicit false still disables.
+          {
+            echo "build_cuda=${BUILD_CUDA:-true}"
+            echo "build_vulkan=${BUILD_VULKAN:-true}"
+            echo "cuda_projects=[\"llama\",\"whisper\",\"sd\",\"audio\",\"ik-llama\"]"
+            echo "vulkan_projects=[\"llama\",\"whisper\",\"sd\",\"audio\"]"
+            echo "push_to_ghcr=${PUSH_TO_GHCR:-true}"
+          } >> "$GITHUB_OUTPUT"
 
   cuda:
     needs: setup
