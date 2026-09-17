@@ -126,7 +126,11 @@ type UIActivityConfig struct {
 	SessionID []string `yaml:"session_id" json:"session_id"`
 }
 
-// AstMatrixConfig configures the AST Matrix cloud router.
+// AstMatrixConfig configured the AST Matrix cloud router.
+//
+// RETIRED 2026-09-17: the in-process astmatrix.Router was replaced by Flock
+// delegation (see FlockConfig). The struct survives only so old config files
+// still parse; the server no longer wires it.
 type AstMatrixConfig struct {
 	Enabled     bool                   `yaml:"enabled"`
 	Strategy    string                 `yaml:"strategy"`
@@ -208,8 +212,13 @@ type Config struct {
 	// AstMatrix configures the AST Matrix cloud router.
 	// When enabled, cloud model requests are routed through the matrix
 	// to remote providers (openrouter, nvidia, groq, google, etc.).
+	//
+	// RETIRED 2026-09-17: ignored by the server. Configure flock: instead.
 	AstMatrix *AstMatrixConfig `yaml:"astMatrix"`
 
+	// Flock delegates cloud-model serving to Flock (:8000), the unified
+	// multi-provider remote-API/completions subsystem. Replaces astMatrix.
+	Flock *FlockConfig `yaml:"flock"`
 	// routing is the canonical source for swap/scheduling configuration.
 	// New code must read Routing, never the backwards-compat fields below.
 	Routing RoutingConfig `yaml:"routing"`
@@ -220,6 +229,27 @@ type Config struct {
 	Groups map[string]GroupConfig `yaml:"groups"` /* key is group ID */
 	Matrix *MatrixConfig          `yaml:"matrix"`
 	Macros MacroList              `yaml:"macros"`
+}
+
+// FlockConfig configures the Flock cloud delegation.
+//
+// herd :25100 stays the front door; any model Flock serves (plus the
+// configured aliases) is reverse-proxied to Flock's /v1 with herd's own
+// FLOCK_API_KEY. Provider pools, health, circuits and retries live in Flock.
+type FlockConfig struct {
+	Enabled  bool              `yaml:"enabled"`
+	BaseURL  string            `yaml:"baseUrl"`
+	KeyEnv   string            `yaml:"keyEnv"`
+	ModelMap map[string]string `yaml:"modelMap"`
+}
+
+func (f *FlockConfig) Defaults() {
+	if f.BaseURL == "" {
+		f.BaseURL = "http://127.0.0.1:8000"
+	}
+	if f.KeyEnv == "" {
+		f.KeyEnv = "FLOCK_API_KEY"
+	}
 }
 
 type RoutingConfig struct {
