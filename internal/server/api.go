@@ -194,6 +194,26 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Flock-served cloud models (delegated to :8000). The retired in-process
+	// astMatrix router used to be the source of these; Flock is now the
+	// source of truth, so :25100 discovery must expose its model IDs.
+	if s.cloud != nil {
+		for alias := range s.cloud.Aliases() {
+			if _, dup := modelIDs[alias]; dup {
+				continue
+			}
+			modelIDs[alias] = struct{}{}
+			data = append(data, newRecord(alias, "flock (alias): "+alias, "", map[string]any{"flock": true, "alias": true}, config.ModelCapConfig{}, "cloud"))
+		}
+		for _, modelID := range s.cloud.ModelIDs() {
+			if _, dup := modelIDs[modelID]; dup {
+				continue
+			}
+			modelIDs[modelID] = struct{}{}
+			data = append(data, newRecord(modelID, "flock: "+modelID, "", map[string]any{"flock": true, "cloud": true}, config.ModelCapConfig{}, "cloud"))
+		}
+	}
+
 	if profile, ok := s.cfg.Profiles[s.ActiveProfile()]; ok {
 		for pin, target := range profile.Pins {
 			if target == "" {
