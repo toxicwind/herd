@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,7 +15,7 @@ import (
 
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
-	"github.com/mostlygeek/llama-swap/internal/swaputil"
+	"github.com/mostlygeek/llama-swap/internal/shared"
 )
 
 type peerMember struct {
@@ -25,15 +24,10 @@ type peerMember struct {
 	apiKey       string
 }
 
-type peerRoute struct {
-	member  *peerMember
-	modelID string
-}
-
 type Peer struct {
 	cfg    config.Config
 	logger *logmon.Monitor
-	peers  map[string]*peerRoute
+	peers  map[string]*peerMember
 
 	shutdownCtx  context.Context
 	shutdownFn   context.CancelFunc
@@ -42,13 +36,8 @@ type Peer struct {
 }
 
 func NewPeer(cfg config.Config, logger *logmon.Monitor) (*Peer, error) {
-	if err := config.ValidatePeerNamespace(cfg); err != nil {
-		return nil, err
-	}
-
 	peers := cfg.Peers
-	modelMap := make(map[string]*peerRoute)
-	bareRoutes := make(map[string][]*peerRoute)
+	modelMap := make(map[string]*peerMember)
 
 	peerIDs := make([]string, 0, len(peers))
 	for peerID := range peers {
@@ -79,7 +68,6 @@ func NewPeer(cfg config.Config, logger *logmon.Monitor) (*Peer, error) {
 			Rewrite: func(r *httputil.ProxyRequest) {
 				r.SetURL(peer.ProxyURL)
 				r.Out.Host = r.Out.URL.Host
-				// Debug: log outgoing URL (only when debug level)
 			},
 		}
 
@@ -91,26 +79,12 @@ func NewPeer(cfg config.Config, logger *logmon.Monitor) (*Peer, error) {
 		}
 
 		reverseProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			// A cancelled request is not a peer failure, so keep it out of the
-			// warning stream whether or not the sentinel applies below.
-			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
-				logger.Debugf("peer %s: request cancelled: %v", peerID, err)
-			} else {
-				logger.Warnf("peer %s: proxy error: %v", peerID, err)
-			}
-
-			// Only a client that actually hung up gets the recorded-only
-			// sentinel (#1029). A request cancelled server-side still has a
-			// client waiting for an answer.
-			if swaputil.MarkClientClosed(w, r) || swaputil.ResponseStarted(w) {
-				return
-			}
-
+			logger.Warnf("peer %s: proxy error: %v", peerID, err)
 			errMsg := fmt.Sprintf("peer proxy error: %v", err)
 			if runtime.GOOS == "darwin" && strings.Contains(err.Error(), "connect: no route to host") {
 				errMsg += " (hint: on macOS, check System Settings > Privacy & Security > Local Network permissions)"
 			}
-			swaputil.SendResponse(w, r, http.StatusBadGateway, errMsg)
+			http.Error(w, errMsg, http.StatusBadGateway)
 		}
 
 		pp := &peerMember{
@@ -119,27 +93,13 @@ func NewPeer(cfg config.Config, logger *logmon.Monitor) (*Peer, error) {
 			apiKey:       peer.ApiKey,
 		}
 
-		seen := make(map[string]struct{})
 		for _, modelID := range peer.Models {
-			if _, duplicate := seen[modelID]; duplicate {
+			if _, found := modelMap[modelID]; found {
+				logger.Warnf("peer %s: model %s already mapped to another peer, skipping", peerID, modelID)
 				continue
 			}
-			seen[modelID] = struct{}{}
-
-			route := &peerRoute{member: pp, modelID: modelID}
-			modelMap[config.PeerModelFQN(peerID, modelID)] = route
-			bareRoutes[modelID] = append(bareRoutes[modelID], route)
+			modelMap[modelID] = pp
 		}
-	}
-
-	for modelID, routes := range bareRoutes {
-		if len(routes) != 1 {
-			continue
-		}
-		if _, reserved := modelMap[modelID]; reserved {
-			continue
-		}
-		modelMap[modelID] = routes[0]
 	}
 
 	shutdownCtx, shutdownFn := context.WithCancel(context.Background())
@@ -187,58 +147,42 @@ func (r *Peer) Shutdown(timeout time.Duration) error {
 
 func (r *Peer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if r.shuttingDown.Load() {
-		swaputil.SendError(w, req, fmt.Errorf("peer proxy is shutting down"))
+		shared.SendError(w, req, fmt.Errorf("peer proxy is shutting down"))
 		return
 	}
 	r.inflight.Add(1)
 	defer r.inflight.Done()
 
-	data, err := swaputil.FetchContext(req, r.cfg)
+	data, err := shared.FetchContext(req, r.cfg)
 	if err != nil {
-		swaputil.SendError(w, req, err)
+		shared.SendError(w, req, err)
 		return
 	}
 
-	route, found := r.peers[data.ModelID]
+	pp, found := r.peers[data.ModelID]
 	if !found {
 		r.logger.Warnf("peer model not found: %s", data.ModelID)
-		swaputil.SendError(w, req, ErrNoPeerModelFound)
+		shared.SendError(w, req, ErrNoPeerModelFound)
 		return
 	}
-	pp := route.member
 
-	r.logger.Debugf("peer: routing model %s to peer %s as %s (free=%v)", data.ModelID, pp.peerID, route.modelID, pp.apiKey == "")
-
-	if data.Model != route.modelID {
-		req, err = swaputil.ReplaceRequestModel(req, data.Model, route.modelID)
-		if err != nil {
-			swaputil.SendResponse(w, req, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
+	r.logger.Debugf("peer: routing model %s to peer %s", data.ModelID, pp.peerID)
 
 	if pp.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+pp.apiKey)
 		req.Header.Set("x-api-key", pp.apiKey)
-	} else {
-		// Workaround for "not anonymous" gate (Pollinations now requires any Bearer to avoid 401).
-		// We ignore anonymous distinction entirely: inject dummy Bearer so free tier always passes.
-		// ponytail: dummy bearer for free backends; use real key via peer.apiKey if rate-limit matters
-		req.Header.Set("Authorization", "Bearer pollinations-free-workaround")
-		req.Header.Set("x-api-key", "pollinations-free-workaround")
 	}
-	r.logger.Debugf("peer: outgoing Authorization=%s Host=%s Path=%s", req.Header.Get("Authorization"), req.Host, req.URL.Path)
+
 	// Cancel the proxy request when the client disconnects or shutdown times out.
-	// Deriving from the request covers the client half directly and keeps the
-	// request's context values — notably the client context that tells a real
-	// disconnect apart from a server-side cancel. AfterFunc links the unrelated
-	// shutdown context in without a goroutine leak.
-	ctx, cancel := context.WithCancel(req.Context())
+	// AfterFunc links both parent contexts to our child without a goroutine leak.
+	ctx, cancel := context.WithCancel(context.Background())
+	stopReq := context.AfterFunc(req.Context(), cancel)
 	stopShutdown := context.AfterFunc(r.shutdownCtx, cancel)
 	req = req.WithContext(ctx)
 
 	pp.reverseProxy.ServeHTTP(w, req)
 
 	stopShutdown()
+	stopReq()
 	cancel()
 }

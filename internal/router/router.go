@@ -6,13 +6,13 @@ import (
 
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 	"github.com/mostlygeek/llama-swap/internal/process"
-	"github.com/mostlygeek/llama-swap/internal/swaputil"
+	"github.com/mostlygeek/llama-swap/internal/shared"
 )
 
 var (
-	ErrNoRouterFound     = swaputil.ErrNoRouterFound
-	ErrNoPeerModelFound  = swaputil.ErrNoPeerModelFound
-	ErrNoLocalModelFound = swaputil.ErrNoLocalModelFound
+	ErrNoRouterFound     = shared.ErrNoRouterFound
+	ErrNoPeerModelFound  = shared.ErrNoPeerModelFound
+	ErrNoLocalModelFound = shared.ErrNoLocalModelFound
 )
 
 type Router interface {

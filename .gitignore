@@ -1,6 +1,5 @@
 .aider*
 .env
-.env.local
 build/
 dist/
 .vscode
@@ -24,7 +23,3 @@ cmd/bench-orchestrator/bench-orchestrator
 *.bak
 *.new
 
-
-# Local llama-server engine builds (third-party sources + binaries, not committed)
-engines/
-__pycache__/

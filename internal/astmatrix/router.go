@@ -77,20 +77,10 @@ func NewRouter(cfg *AstMatrixConfig, logger *logmon.Monitor) (*Router, error) {
 
 // Handles returns true if any provider can serve modelID.
 func (r *Router) Handles(modelID string) bool {
-	if modelID == "" {
-		return false
-	}
+	if modelID == "" { return false }
 	for _, p := range r.registry.All() {
-		for _, m := range p.Models {
-			if m == modelID {
-				return true
-			}
-		}
-		for local := range p.ModelMap {
-			if local == modelID {
-				return true
-			}
-		}
+		for _, m := range p.Models { if m == modelID { return true } }
+		for local := range p.ModelMap { if local == modelID { return true } }
 	}
 	return false
 }
@@ -106,9 +96,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	modelID := ""
 	if bodyJSON != nil {
-		if m, ok := bodyJSON["model"].(string); ok {
-			modelID = m
-		}
+		if m, ok := bodyJSON["model"].(string); ok { modelID = m }
 	}
 
 	isAST := r.cfg.ASTAlways
@@ -118,8 +106,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				if msg, ok := m.(map[string]interface{}); ok {
 					if c, ok := msg["content"].(string); ok {
 						if strings.Contains(c, "<ast>") || strings.Contains(c, "AST:") {
-							isAST = true
-							break
+							isAST = true; break
 						}
 					}
 				}
@@ -128,9 +115,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	strategy := r.cfg.Strategy
-	if isAST && r.cfg.ASTStrategy != "" {
-		strategy = r.cfg.ASTStrategy
-	}
+	if isAST && r.cfg.ASTStrategy != "" { strategy = r.cfg.ASTStrategy }
 
 	rt := &routingContext{
 		modelID: modelID, isAST: isAST, bodyBytes: body,
@@ -140,22 +125,14 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.logger.Infof("[astmatrix] %s model=%s strategy=%s", req.Method, modelID, strategy)
 
 	switch strategy {
-	case "ast_race":
-		r.routeAstRace(w, req, rt)
-	case "sticky_affinity":
-		r.routeSticky(w, req, rt)
-	case "weighted_elo":
-		r.routeWeighted(w, req, rt)
-	case "least_latency":
-		r.routeLeastLatency(w, req, rt)
-	case "round_robin":
-		r.routeRoundRobin(w, req, rt)
-	case "free":
-		r.routeFree(w, req, rt)
-	case "circuit_chain":
-		r.routeCircuitChain(w, req, rt)
-	default:
-		r.routeHybrid(w, req, rt)
+	case "ast_race":        r.routeAstRace(w, req, rt)
+	case "sticky_affinity": r.routeSticky(w, req, rt)
+	case "weighted_elo":    r.routeWeighted(w, req, rt)
+	case "least_latency":    r.routeLeastLatency(w, req, rt)
+	case "round_robin":      r.routeRoundRobin(w, req, rt)
+	case "free":             r.routeFree(w, req, rt)
+	case "circuit_chain":    r.routeCircuitChain(w, req, rt)
+	default:                 r.routeHybrid(w, req, rt)
 	}
 	r.metrics.Record(strategy, time.Since(start))
 }
@@ -170,15 +147,9 @@ func (r *Router) routeHybrid(w http.ResponseWriter, req *http.Request, rt *routi
 	for attempt := 0; attempt < r.cfg.MaxRetries; attempt++ {
 		for _, p := range providers {
 			cb := r.getCircuit(p.ID)
-			if !cb.Allow() {
-				continue
-			}
-			if !r.limiter.Allow(p.ID) {
-				continue
-			}
-			if !r.healthDB.IsHealthy(p.ID) {
-				continue
-			}
+			if !cb.Allow() { continue }
+			if !r.limiter.Allow(p.ID) { continue }
+			if !r.healthDB.IsHealthy(p.ID) { continue }
 
 			resp, err := r.call(req.Context(), p, req, rt)
 			if err == nil && resp.StatusCode < 500 {
@@ -186,9 +157,7 @@ func (r *Router) routeHybrid(w http.ResponseWriter, req *http.Request, rt *routi
 				r.stream(w, resp, rt)
 				return
 			}
-			if resp != nil {
-				resp.Body.Close()
-			}
+			if resp != nil { resp.Body.Close() }
 			lastErr = err
 			cb.RecordFailure()
 		}
@@ -207,11 +176,7 @@ func (r *Router) routeAstRace(w http.ResponseWriter, req *http.Request, rt *rout
 	ctx, cancel := context.WithTimeout(req.Context(), time.Duration(r.cfg.RequestTimeout)*time.Second)
 	defer cancel()
 
-	type result struct {
-		resp *http.Response
-		p    Provider
-		err  error
-	}
+	type result struct { resp *http.Response; p Provider; err error }
 	results := make(chan result, len(providers))
 
 	for _, p := range providers {
@@ -230,9 +195,7 @@ func (r *Router) routeAstRace(w http.ResponseWriter, req *http.Request, rt *rout
 				r.stream(w, res.resp, rt)
 				return
 			}
-			if res.resp != nil {
-				res.resp.Body.Close()
-			}
+			if res.resp != nil { res.resp.Body.Close() }
 			lastErr = res.err
 		case <-ctx.Done():
 			shared.SendError(w, req, fmt.Errorf("ast_race timeout"))
@@ -279,9 +242,7 @@ func (r *Router) routeWeighted(w http.ResponseWriter, req *http.Request, rt *rou
 	total := 0.0
 	for _, p := range providers {
 		elo := r.healthDB.GetELO(p.ID)
-		if elo <= 0 {
-			elo = 1500
-		}
+		if elo <= 0 { elo = 1500 }
 		total += float64(elo)
 	}
 
@@ -289,9 +250,7 @@ func (r *Router) routeWeighted(w http.ResponseWriter, req *http.Request, rt *rou
 	cum := 0.0
 	for _, p := range providers {
 		elo := r.healthDB.GetELO(p.ID)
-		if elo <= 0 {
-			elo = 1500
-		}
+		if elo <= 0 { elo = 1500 }
 		cum += float64(elo)
 		if pick <= cum {
 			if resp, err := r.call(req.Context(), p, req, rt); err == nil {
@@ -318,8 +277,7 @@ func (r *Router) routeLeastLatency(w http.ResponseWriter, req *http.Request, rt 
 	bestLat := r.healthDB.GetLatency(best.ID)
 	for _, p := range providers[1:] {
 		if lat := r.healthDB.GetLatency(p.ID); lat > 0 && (bestLat == 0 || lat < bestLat) {
-			best = p
-			bestLat = lat
+			best = p; bestLat = lat
 		}
 	}
 
@@ -370,18 +328,14 @@ func (r *Router) routeFree(w http.ResponseWriter, req *http.Request, rt *routing
 func (r *Router) routeCircuitChain(w http.ResponseWriter, req *http.Request, rt *routingContext) {
 	for _, p := range r.registry.ForModel(rt.modelID) {
 		cb := r.getCircuit(p.ID)
-		if !cb.Allow() {
-			continue
-		}
+		if !cb.Allow() { continue }
 		resp, err := r.call(req.Context(), p, req, rt)
 		if err == nil && resp.StatusCode < 500 {
 			cb.RecordSuccess()
 			r.stream(w, resp, rt)
 			return
 		}
-		if resp != nil {
-			resp.Body.Close()
-		}
+		if resp != nil { resp.Body.Close() }
 		cb.RecordFailure()
 	}
 	shared.SendError(w, req, fmt.Errorf("circuit_chain exhausted all providers"))
@@ -402,25 +356,17 @@ func (r *Router) filterHealthy(providers []Provider) []Provider {
 
 func (r *Router) call(ctx context.Context, p Provider, req *http.Request, rt *routingContext) (*http.Response, error) {
 	u, err := url.Parse(p.BaseURL)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	target := u.String() + req.URL.Path
-	if req.URL.RawQuery != "" {
-		target += "?" + req.URL.RawQuery
-	}
+	if req.URL.RawQuery != "" { target += "?" + req.URL.RawQuery }
 
 	bodyClone := bytes.NewReader(rt.bodyBytes)
 	newReq, err := http.NewRequestWithContext(ctx, req.Method, target, bodyClone)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	for k, vv := range req.Header {
-		for _, v := range vv {
-			newReq.Header.Add(k, v)
-		}
+		for _, v := range vv { newReq.Header.Add(k, v) }
 	}
 	if p.APIKey != "" {
 		newReq.Header.Set("Authorization", "Bearer "+p.APIKey)
@@ -441,9 +387,7 @@ func (r *Router) call(ctx context.Context, p Provider, req *http.Request, rt *ro
 
 	start := time.Now()
 	resp, err := r.client.Do(newReq)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	r.healthDB.RecordLatency(p.ID, time.Since(start))
 	return resp, nil
@@ -452,9 +396,7 @@ func (r *Router) call(ctx context.Context, p Provider, req *http.Request, rt *ro
 func (r *Router) stream(w http.ResponseWriter, resp *http.Response, rt *routingContext) {
 	defer resp.Body.Close()
 	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
+		for _, v := range vv { w.Header().Add(k, v) }
 	}
 	w.WriteHeader(resp.StatusCode)
 
@@ -462,17 +404,9 @@ func (r *Router) stream(w http.ResponseWriter, resp *http.Response, rt *routingC
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				w.Write(buf[:n])
-				flusher.Flush()
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				r.logger.Warnf("[astmatrix] stream error: %v", err)
-				break
-			}
+			if n > 0 { w.Write(buf[:n]); flusher.Flush() }
+			if err == io.EOF { break }
+			if err != nil { r.logger.Warnf("[astmatrix] stream error: %v", err); break }
 		}
 	} else {
 		io.Copy(w, resp.Body)
@@ -505,15 +439,11 @@ func (r *Router) probe(p Provider) {
 	defer cancel()
 
 	probeURL := p.BaseURL
-	if !strings.HasSuffix(probeURL, "/") {
-		probeURL += "/"
-	}
+	if !strings.HasSuffix(probeURL, "/") { probeURL += "/" }
 	probeURL += "health"
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
-	if p.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.APIKey)
-	}
+	if p.APIKey != "" { req.Header.Set("Authorization", "Bearer "+p.APIKey) }
 
 	start := time.Now()
 	resp, err := r.client.Do(req)

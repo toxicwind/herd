@@ -45,18 +45,8 @@ type ActivityLogEntry struct {
 	Metadata        map[string]string `json:"metadata,omitempty"`
 }
 
-// ActivityFilter narrows which activity rows a query matches. The zero value
-// matches every row, and each field is independent: set fields are ANDed.
-type ActivityFilter struct {
-	Models []string  // model_id IN (...); empty matches all models
-	Start  time.Time // inclusive lower bound on ts_created; zero is unbounded
-	End    time.Time // inclusive upper bound on ts_created; zero is unbounded
-	MinID  int       // inclusive lower bound on id; 0 is unbounded
-	MaxID  int       // inclusive upper bound on id; 0 is unbounded
-}
-
 type ActivityQuery struct {
-	ActivityFilter
+	Model string
 	Limit int
 	Page  int
 	Sort  string // sortable column key, empty defaults to "id"
@@ -235,7 +225,7 @@ func (s *Store) ListActivity(ctx context.Context, query ActivityQuery) (Activity
 	query = normalizeActivityQuery(query)
 	offset := (query.Page - 1) * query.Limit
 
-	where, args := activityWhere(query.ActivityFilter)
+	where, args := activityWhere(query.Model)
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM activity`+where, args...).Scan(&total); err != nil {
 		return ActivityPage{}, fmt.Errorf("count activity: %w", err)
@@ -277,11 +267,7 @@ func (s *Store) ListActivity(ctx context.Context, query ActivityQuery) (Activity
 }
 
 func (s *Store) ActivityStats(ctx context.Context, query ActivityStatsQuery) (ActivityStats, error) {
-	filter := ActivityFilter{}
-	if model := strings.TrimSpace(query.Model); model != "" {
-		filter.Models = []string{model}
-	}
-	where, args := activityWhere(filter)
+	where, args := activityWhere(query.Model)
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*),
@@ -451,48 +437,12 @@ func percentile(sorted []float64, p float64) float64 {
 	return sorted[lower] + fraction*(sorted[upper]-sorted[lower])
 }
 
-// activityWhere builds a parameterized WHERE clause from a filter. It returns
-// an empty string when nothing is filtered. Callers append further conditions
-// with " AND ...", so the clause is always a single unparenthesized conjunction.
-func activityWhere(filter ActivityFilter) (string, []any) {
-	var conditions []string
-	var args []any
-
-	models := make([]string, 0, len(filter.Models))
-	for _, model := range filter.Models {
-		if model = strings.TrimSpace(model); model != "" {
-			models = append(models, model)
-		}
-	}
-	if len(models) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(models)), ", ")
-		conditions = append(conditions, "model_id IN ("+placeholders+")")
-		for _, model := range models {
-			args = append(args, model)
-		}
-	}
-
-	if !filter.Start.IsZero() {
-		conditions = append(conditions, "ts_created >= ?")
-		args = append(args, filter.Start.Unix())
-	}
-	if !filter.End.IsZero() {
-		conditions = append(conditions, "ts_created <= ?")
-		args = append(args, filter.End.Unix())
-	}
-	if filter.MinID > 0 {
-		conditions = append(conditions, "id >= ?")
-		args = append(args, filter.MinID)
-	}
-	if filter.MaxID > 0 {
-		conditions = append(conditions, "id <= ?")
-		args = append(args, filter.MaxID)
-	}
-
-	if len(conditions) == 0 {
+func activityWhere(model string) (string, []any) {
+	model = strings.TrimSpace(model)
+	if model == "" {
 		return "", nil
 	}
-	return " WHERE " + strings.Join(conditions, " AND "), args
+	return " WHERE model_id = ?", []any{model}
 }
 
 func marshalMetadata(metadata map[string]string) (string, error) {

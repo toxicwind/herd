@@ -3,6 +3,7 @@ package astmatrix
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,35 +15,13 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 )
 
-// testRequest POSTs a JSON chat-completions body to the router and returns
-// the recorded response. Helper for the live KIMI suite.
-func testRequest(t *testing.T, router *Router, body map[string]interface{}) *http.Response {
-	t.Helper()
-	payload, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	return w.Result()
-}
-
-// readBody drains a response body to a string for failure diagnostics.
-func readBody(resp *http.Response) string {
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	return string(b)
-}
-
 // TestLiveKimi tests against the real KIMI API sandbox
 func TestLiveKimi(t *testing.T) {
 	if os.Getenv("LIVE_TEST") != "1" {
 		t.Skip("Set LIVE_TEST=1 to run live tests")
 	}
 
-	logger := logmon.NewWriter(io.Discard)
+	logger := logmon.NewMonitor("astmatrix-live")
 	cfg := loadLiveConfig(t)
 	router, err := NewRouter(cfg, logger)
 	if err != nil {
@@ -57,8 +36,8 @@ func TestLiveKimi(t *testing.T) {
 	// Test 1: KIMI completion
 	t.Run("KimiCompletion", func(t *testing.T) {
 		body := map[string]interface{}{
-			"model":      "kimi-auto",
-			"messages":   []map[string]string{{"role": "user", "content": "Say hello in 3 words"}},
+			"model":    "kimi-auto",
+			"messages": []map[string]string{{"role": "user", "content": "Say hello in 3 words"}},
 			"max_tokens": 50,
 		}
 		resp := testRequest(t, router, body)
@@ -76,9 +55,9 @@ func TestLiveKimi(t *testing.T) {
 	// Test 2: KIMI streaming
 	t.Run("KimiStreaming", func(t *testing.T) {
 		body := map[string]interface{}{
-			"model":      "kimi-fast",
-			"messages":   []map[string]string{{"role": "user", "content": "Count 1,2,3"}},
-			"stream":     true,
+			"model":    "kimi-fast",
+			"messages": []map[string]string{{"role": "user", "content": "Count 1,2,3"}},
+			"stream":   true,
 			"max_tokens": 100,
 		}
 		resp := testRequest(t, router, body)
@@ -131,8 +110,8 @@ func TestLiveKimi(t *testing.T) {
 		}
 
 		body := map[string]interface{}{
-			"model":      "openrouter/auto",
-			"messages":   []map[string]string{{"role": "user", "content": "Hello"}},
+			"model":    "openrouter/auto",
+			"messages": []map[string]string{{"role": "user", "content": "Hello"}},
 			"max_tokens": 50,
 		}
 		resp := testRequest(t, router, body)
@@ -228,9 +207,7 @@ func loadLiveConfig(t *testing.T) *AstMatrixConfig {
 	cfg.Defaults()
 
 	if cfg.Providers["kimi"].BaseURL == "" {
-		p := cfg.Providers["kimi"]
-		p.BaseURL = "https://kimi-api-sandbox.msh.team/v1"
-		cfg.Providers["kimi"] = p
+		cfg.Providers["kimi"].BaseURL = "https://kimi-api-sandbox.msh.team/v1"
 	}
 
 	return cfg

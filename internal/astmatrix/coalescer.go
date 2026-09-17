@@ -16,20 +16,14 @@ type PendingRequest struct {
 
 func (pr *PendingRequest) Wait() (*http.Response, error) {
 	<-pr.done
-	pr.mu.Lock()
-	defer pr.mu.Unlock()
+	pr.mu.Lock(); defer pr.mu.Unlock()
 	return pr.response, pr.err
 }
 
 func (pr *PendingRequest) Complete(resp *http.Response, err error) {
-	pr.mu.Lock()
-	defer pr.mu.Unlock()
-	if pr.completed {
-		return
-	}
-	pr.completed = true
-	pr.response = resp
-	pr.err = err
+	pr.mu.Lock(); defer pr.mu.Unlock()
+	if pr.completed { return }
+	pr.completed = true; pr.response = resp; pr.err = err
 	close(pr.done)
 }
 
@@ -44,21 +38,17 @@ func NewRequestCoalescer(ttl time.Duration) *RequestCoalescer {
 }
 
 func (rc *RequestCoalescer) Get(key string) *PendingRequest {
-	rc.mu.RLock()
-	defer rc.mu.RUnlock()
+	rc.mu.RLock(); defer rc.mu.RUnlock()
 	return rc.pending[key]
 }
 
 func (rc *RequestCoalescer) Register(key string) *PendingRequest {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
+	rc.mu.Lock(); defer rc.mu.Unlock()
 	pr := &PendingRequest{done: make(chan struct{})}
 	rc.pending[key] = pr
 	go func() {
 		time.Sleep(rc.ttl)
-		rc.mu.Lock()
-		delete(rc.pending, key)
-		rc.mu.Unlock()
+		rc.mu.Lock(); delete(rc.pending, key); rc.mu.Unlock()
 	}()
 	return pr
 }

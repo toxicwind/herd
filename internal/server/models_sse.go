@@ -16,34 +16,31 @@ import (
 // synthesize the feed even when a backend does not speak /models/sse itself.
 //
 // Wire format: SSE, one event per `data:` line, Accept: text/event-stream.
-//
-//	data: {"model":"<id>|*","event":"<name>","data":{...}}\n\n
+//   data: {"model":"<id>|*","event":"<name>","data":{...}}\n\n
 //
 // Events that change model state (trigger Zed re-discovery):
-//
-//	"models_reload" (model "*"), "model_remove",
-//	data.status == "loaded" | "unloaded".
-//
+//   "models_reload" (model "*"), "model_remove",
+//   data.status == "loaded" | "unloaded".
 // "loading" events carry data.progress for the % indicator but do NOT
 // trigger re-discovery.
 type ModelEvent struct {
-	Model string          `json:"model"`
-	Event string          `json:"event"`
+	Model string         `json:"model"`
+	Event string         `json:"event"`
 	Data  *ModelEventData `json:"data,omitempty"`
 }
 
 // ModelEventData is the optional payload. Status drives Zed's state machine;
 // progress is the per-stage load fraction (0.0..=1.0).
 type ModelEventData struct {
-	Status   *string       `json:"status,omitempty"`
-	ExitCode *int32        `json:"exit_code,omitempty"`
+	Status   *string      `json:"status,omitempty"`
+	ExitCode *int32      `json:"exit_code,omitempty"`
 	Progress *LoadProgress `json:"progress,omitempty"`
 }
 
 // LoadProgress matches Zed's LoadProgress: stages load in order
 // (text_model, optional spec_model/mmproj_model), each 0.0..=1.0.
 type LoadProgress struct {
-	Stages  []string `json:"stages"`
+	Stages []string `json:"stages"`
 	Current string   `json:"current"`
 	Value   float32  `json:"value"`
 }
@@ -63,7 +60,7 @@ type modelEventBroadcaster struct {
 	// lastStatus tracks the most recent terminal status per model so we only
 	// broadcast on an actual transition (avoids Zed re-discovery spam).
 	lastStatus map[string]string
-	log        *logmon.Monitor
+	log       *logmon.Monitor
 }
 
 func newModelEventBroadcaster(log *logmon.Monitor) *modelEventBroadcaster {
@@ -107,13 +104,10 @@ func (b *modelEventBroadcaster) broadcast(ev ModelEvent) {
 
 // statusEvent emits a terminal loaded/unloaded transition (deduped).
 func (b *modelEventBroadcaster) statusEvent(modelID, status string, exitCode *int32) {
-	b.mu.Lock()
 	if prev, ok := b.lastStatus[modelID]; ok && prev == status {
-		b.mu.Unlock()
 		return
 	}
 	b.lastStatus[modelID] = status
-	b.mu.Unlock()
 	data := &ModelEventData{Status: &status}
 	if exitCode != nil {
 		data.ExitCode = exitCode
@@ -139,9 +133,7 @@ func (b *modelEventBroadcaster) loadingEvent(modelID string, stages []string, cu
 
 // reloadEvent announces the whole list changed (config reload / preload).
 func (b *modelEventBroadcaster) reloadEvent() {
-	b.mu.Lock()
 	b.lastStatus = make(map[string]string)
-	b.mu.Unlock()
 	b.broadcast(ModelEvent{Model: "*", Event: "models_reload"})
 }
 
@@ -201,9 +193,7 @@ func strPtr(s string) *string { return &s }
 
 // handleModelEvents serves GET /models/sse as text/event-stream, matching
 // upstream llama.cpp's get_router_models_sse framing exactly:
-//
-//	data: <json>\n\n
-//
+//   data: <json>\n\n
 // Zed's stream_model_events() reads one JSON envelope per `data:` line and
 // reconnects when the stream ends, so we close cleanly on disconnect/stop.
 func (s *Server) handleModelEvents(w http.ResponseWriter, r *http.Request) {

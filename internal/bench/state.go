@@ -51,20 +51,20 @@ type ProbeResult struct {
 // State is the single source of truth for orchestrator coordination.
 // Subagents read this on entry and atomically rewrite on exit.
 type State struct {
-	Meta        map[string]any   `json:"meta"`
-	Phase       PhaseState       `json:"phase"`
-	Context     Context          `json:"context"`
-	Findings    Findings         `json:"findings"`
-	Assignments map[Phase]string `json:"assignments"`
-	mu          sync.Mutex       `json:"-"`
+	Meta        map[string]any         `json:"meta"`
+	Phase       PhaseState             `json:"phase"`
+	Context     Context                `json:"context"`
+	Findings    Findings               `json:"findings"`
+	Assignments map[Phase]string       `json:"assignments"`
+	mu          sync.Mutex             `json:"-"`
 }
 
 // PhaseState tracks the current orchestrator phase + history.
 type PhaseState struct {
-	Current    Phase    `json:"current"`
-	History    []string `json:"history"`
-	BlockedBy  *string  `json:"blocked_by"`
-	RetryCount int      `json:"retry_count"`
+	Current     Phase    `json:"current"`
+	History     []string `json:"history"`
+	BlockedBy   *string  `json:"blocked_by"`
+	RetryCount  int      `json:"retry_count"`
 }
 
 // Context holds the runtime configuration of the orchestrator.

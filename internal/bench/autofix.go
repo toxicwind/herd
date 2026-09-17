@@ -18,11 +18,11 @@ type ModelsYML struct {
 
 // ProviderConfig is one provider block in models.yml.
 type ProviderConfig struct {
-	BaseURL        string                    `yaml:"baseUrl"`
-	API            string                    `yaml:"api"`
-	Auth           string                    `yaml:"auth"`
-	Discovery      map[string]any            `yaml:"discovery"`
-	ModelOverrides map[string]map[string]any `yaml:"modelOverrides"`
+	BaseURL        string                          `yaml:"baseUrl"`
+	API            string                          `yaml:"api"`
+	Auth           string                          `yaml:"auth"`
+	Discovery      map[string]any                  `yaml:"discovery"`
+	ModelOverrides map[string]map[string]any      `yaml:"modelOverrides"`
 }
 
 // DefaultModelsYMLPath is the OMP-side config file the autofix mutates.
@@ -122,8 +122,8 @@ func (m *ModelsYML) EnsureHerdProvider(baseURL string) {
 			API:     "openai-completions",
 			Auth:    "none",
 			Discovery: map[string]any{
-				"type":     "openai-models-list",
-				"injectV1": true,
+				"type":      "openai-models-list",
+				"injectV1":  true,
 			},
 			ModelOverrides: map[string]map[string]any{},
 		}

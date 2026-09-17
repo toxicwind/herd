@@ -107,7 +107,7 @@ func TestModelEvents_ConcurrentSubscribers(t *testing.T) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	stub.setRunningModel("m1", process.StateReady)
+	stub.running["m1"] = process.StateReady
 	time.Sleep(150 * time.Millisecond)
 	cancel() // terminate all SSE handlers
 	wg.Wait()
@@ -214,7 +214,7 @@ func TestModelEvents_LoadingProgress(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Set to StateStarting (loading phase)
-	stub.setRunningModel("m1", process.StateStarting)
+	stub.running["m1"] = process.StateStarting
 	time.Sleep(120 * time.Millisecond)
 
 	events := parseSSE(t, w.String())
@@ -279,8 +279,8 @@ func TestModelEvents_ModelRemove(t *testing.T) {
 	go func() { s.ServeHTTP(w, req) }()
 	time.Sleep(60 * time.Millisecond)
 
-	stub.deleteModel("m1")
-	stub.deleteRunningModel("m1")
+	delete(stub.models, "m1")
+	delete(stub.running, "m1")
 	s.modelEvents.removeEvent("m1")
 	time.Sleep(100 * time.Millisecond)
 

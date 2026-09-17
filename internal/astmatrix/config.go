@@ -33,31 +33,13 @@ type ProviderCfg struct {
 }
 
 func (a *AstMatrixConfig) Defaults() {
-	if a.Strategy == "" {
-		a.Strategy = "hybrid"
-	}
-	if a.ASTStrategy == "" {
-		a.ASTStrategy = "ast_race"
-	}
-	if a.MaxParallel <= 0 {
-		a.MaxParallel = 4
-	}
-	if a.DbPath == "" {
-		a.DbPath = "/tmp/ast_matrix.db"
-	}
-	if a.StickyTTL <= 0 {
-		a.StickyTTL = 1800
-	}
-	if a.FifoMax <= 0 {
-		a.FifoMax = 64
-	}
-	if a.RequestTimeout <= 0 {
-		a.RequestTimeout = 95
-	}
-	if a.MaxRetries <= 0 {
-		a.MaxRetries = 3
-	}
-	if a.HealthProbeInterval <= 0 {
-		a.HealthProbeInterval = 30
-	}
+	if a.Strategy == ""       { a.Strategy = "hybrid" }
+	if a.ASTStrategy == ""   { a.ASTStrategy = "ast_race" }
+	if a.MaxParallel <= 0     { a.MaxParallel = 4 }
+	if a.DbPath == ""         { a.DbPath = "/tmp/ast_matrix.db" }
+	if a.StickyTTL <= 0       { a.StickyTTL = 1800 }
+	if a.FifoMax <= 0         { a.FifoMax = 64 }
+	if a.RequestTimeout <= 0  { a.RequestTimeout = 95 }
+	if a.MaxRetries <= 0      { a.MaxRetries = 3 }
+	if a.HealthProbeInterval <= 0 { a.HealthProbeInterval = 30 }
 }

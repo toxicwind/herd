@@ -36,12 +36,8 @@ func NewProviderRegistry(cfg map[string]ProviderCfg) *ProviderRegistry {
 			FreeTier: pcfg.FreeTier, Models: pcfg.Models,
 			ModelMap: pcfg.ModelMap, Weight: pcfg.Weight, ELO: pcfg.ELO,
 		}
-		if pcfg.KeyEnv != "" {
-			p.APIKey = os.Getenv(pcfg.KeyEnv)
-		}
-		if p.APIKey == "" && pcfg.KeyEnvAlt != "" {
-			p.APIKey = os.Getenv(pcfg.KeyEnvAlt)
-		}
+		if pcfg.KeyEnv != "" { p.APIKey = os.Getenv(pcfg.KeyEnv) }
+		if p.APIKey == "" && pcfg.KeyEnvAlt != "" { p.APIKey = os.Getenv(pcfg.KeyEnvAlt) }
 		pr.providers[id] = p
 	}
 	pr.rebuildIndex()
@@ -51,12 +47,8 @@ func NewProviderRegistry(cfg map[string]ProviderCfg) *ProviderRegistry {
 func (pr *ProviderRegistry) rebuildIndex() {
 	pr.byModel = make(map[string][]string)
 	for id, p := range pr.providers {
-		for _, m := range p.Models {
-			pr.byModel[m] = append(pr.byModel[m], id)
-		}
-		for local := range p.ModelMap {
-			pr.byModel[local] = append(pr.byModel[local], id)
-		}
+		for _, m := range p.Models { pr.byModel[m] = append(pr.byModel[m], id) }
+		for local := range p.ModelMap { pr.byModel[local] = append(pr.byModel[local], id) }
 	}
 }
 
@@ -64,16 +56,12 @@ func (pr *ProviderRegistry) ForModel(modelID string) []Provider {
 	ids, ok := pr.byModel[modelID]
 	if !ok {
 		var all []Provider
-		for _, p := range pr.providers {
-			all = append(all, p)
-		}
+		for _, p := range pr.providers { all = append(all, p) }
 		return all
 	}
 	var result []Provider
 	for _, id := range ids {
-		if p, ok := pr.providers[id]; ok {
-			result = append(result, p)
-		}
+		if p, ok := pr.providers[id]; ok { result = append(result, p) }
 	}
 	return result
 }
@@ -86,9 +74,7 @@ func (pr *ProviderRegistry) Get(id string) (Provider, bool) {
 func (pr *ProviderRegistry) Providers() []Provider { return pr.All() }
 func (pr *ProviderRegistry) All() []Provider {
 	var result []Provider
-	for _, p := range pr.providers {
-		result = append(result, p)
-	}
+	for _, p := range pr.providers { result = append(result, p) }
 	return result
 }
 

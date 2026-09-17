@@ -16,11 +16,11 @@ import (
 // Orchestrator is the high-level coordinator. It owns the state file and
 // runs phases sequentially, persisting progress after each.
 type Orchestrator struct {
-	State     *State
-	ModelsYML *ModelsYML
-	YMLPath   string
-	BenchPath string
-	StatePath string
+	State       *State
+	ModelsYML   *ModelsYML
+	YMLPath     string
+	BenchPath   string
+	StatePath   string
 }
 
 // NewOrchestrator wires a fresh Orchestrator with default paths.
@@ -45,6 +45,7 @@ func NewOrchestrator() (*Orchestrator, error) {
 		StatePath: DefaultStatePath,
 	}, nil
 }
+
 
 // RunSeed initializes the state file with default empty values.
 func (o *Orchestrator) RunSeed() error {
