@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-07-15T05:39:35.632648",
+  "attempts": [
+    {
+      "level": 1,
+      "result": "success"
+    },
+    {
+      "level": 2,
+      "result": "success"
+    },
+    {
+      "level": 3,
+      "result": "completed"
+    },
+    {
+      "level": 4,
+      "result": "exception"
+    },
+    {
+      "level": 5,
+      "result": "completed"
+    },
+    {
+      "level": 7,
+      "result": "completed"
+    }
+  ],
+  "success": true,
+  "final_state": {
+    "cdp_working": true,
+    "env_cdp": "<html><head></head><body></body></html>",
+    "http_working": true,
+    "_proc_self_environ": "<html><head></head><body></body></html>",
+    "proxy_results": {
+      "localhost:8888": true,
+      "10.0.0.1:443": true,
+      "10.0.0.10:53": true,
+      "192.168.0.1:6443": true
+    },
+    "browser_navigator_userAgent": "Mozilla/5.0 (X11; Linux x86_64; zh-CN) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.196 Safari/537.36"
+  },
+  "timestamp_end": "2026-07-15T05:39:46.406006"
+}

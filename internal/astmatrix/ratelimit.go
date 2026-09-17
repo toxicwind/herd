@@ -22,12 +22,16 @@ func NewTokenBucket(capacity, rate float64) *TokenBucket {
 }
 
 func (tb *TokenBucket) Allow() bool {
-	tb.mu.Lock(); defer tb.mu.Unlock()
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
 	now := time.Now()
 	elapsed := now.Sub(tb.lastFill).Seconds()
 	tb.tokens = min(tb.capacity, tb.tokens+elapsed*tb.rate)
 	tb.lastFill = now
-	if tb.tokens >= 1 { tb.tokens--; return true }
+	if tb.tokens >= 1 {
+		tb.tokens--
+		return true
+	}
 	return false
 }
 
@@ -41,7 +45,9 @@ func NewRateLimiter(providers map[string]ProviderCfg) *RateLimiter {
 	rl := &RateLimiter{buckets: make(map[string]*TokenBucket)}
 	for id, p := range providers {
 		rate := 60.0
-		if p.FreeTier { rate = 10.0 }
+		if p.FreeTier {
+			rate = 10.0
+		}
 		rl.buckets[id] = NewTokenBucket(rate, rate/60.0)
 	}
 	return rl
@@ -51,7 +57,8 @@ func (rl *RateLimiter) Allow(provider string) bool {
 	rl.mu.RLock()
 	b, ok := rl.buckets[provider]
 	rl.mu.RUnlock()
-	if !ok { return true }
+	if !ok {
+		return true
+	}
 	return b.Allow()
 }
-

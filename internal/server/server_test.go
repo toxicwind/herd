@@ -4,24 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mostlygeek/llama-swap/internal/config"
+	"github.com/mostlygeek/llama-swap/internal/docagent"
 	"github.com/mostlygeek/llama-swap/internal/event"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
+	"github.com/mostlygeek/llama-swap/internal/mcptools"
 	"github.com/mostlygeek/llama-swap/internal/process"
 	"github.com/mostlygeek/llama-swap/internal/router"
-	"github.com/mostlygeek/llama-swap/internal/shared"
 	"github.com/mostlygeek/llama-swap/internal/store"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 )
 
 // stubRouter is a minimal router.LocalRouter for Server dispatch tests.
 type stubRouter struct {
+	mu            sync.RWMutex
 	models        map[string]bool
 	response      string
 	serveHTTP     func(http.ResponseWriter, *http.Request)
@@ -41,7 +46,11 @@ func newStubRouter(models []string, response string) *stubRouter {
 	return &stubRouter{models: m, response: response}
 }
 
-func (s *stubRouter) Handles(model string) bool      { return s.models[model] }
+func (s *stubRouter) Handles(model string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.models[model]
+}
 func (s *stubRouter) Shutdown(_ time.Duration) error { s.shutdownCalls.Add(1); return nil }
 func (s *stubRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.serveHTTP != nil {
@@ -52,7 +61,50 @@ func (s *stubRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(s.response))
 }
 
-func (s *stubRouter) RunningModels() map[string]process.ProcessState { return s.running }
+// RunningModels returns a snapshot copy, mirroring the production
+// baseRouter which builds a fresh map per call. Callers (e.g.
+// watchModelState) may hold the result while the test mutates the stub.
+func (s *stubRouter) RunningModels() map[string]process.ProcessState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]process.ProcessState, len(s.running))
+	for id, st := range s.running {
+		out[id] = st
+	}
+	return out
+}
+
+// setRunningModel records a model state transition (test-side simulation of
+// an on-demand load). Safe to call while watchModelState is polling.
+func (s *stubRouter) setRunningModel(id string, st process.ProcessState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running == nil {
+		s.running = make(map[string]process.ProcessState)
+	}
+	s.running[id] = st
+}
+
+// deleteRunningModel simulates an on-demand unload.
+func (s *stubRouter) deleteRunningModel(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, id)
+}
+
+// setRunning replaces the whole running set (used at test setup).
+func (s *stubRouter) setRunning(running map[string]process.ProcessState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running = running
+}
+
+// deleteModel removes a model from the served set.
+func (s *stubRouter) deleteModel(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.models, id)
+}
 func (s *stubRouter) Unload(timeout time.Duration, models ...string) {
 	s.unloadCalls.Add(1)
 	s.unloadTimeout = timeout
@@ -92,6 +144,28 @@ func newTestServer(local router.LocalRouter, peer router.Router) *Server {
 	return s
 }
 
+// newTestServerWithReference is newTestServer plus an indexed documentation
+// library, for the /api/mcp tests. Handlers read s.reference at request time,
+// so no re-registration is needed.
+func newTestServerWithReference(local router.LocalRouter, peer router.Router, fsys fs.FS) *Server {
+	s := newTestServer(local, peer)
+	s.reference = docagent.New(fsys)
+
+	registry, err := mcptools.New(
+		docagent.NewDocsProvider(s.reference),
+		mcptools.NewSysProvider(func() time.Time { return testClock }),
+		config.NewConfigProvider(s.cfg),
+	)
+	if err != nil {
+		panic(err)
+	}
+	s.tools = registry
+	return s
+}
+
+// testClock is the fixed instant SysProvider reports in tests.
+var testClock = time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
+
 func newTestMetricsMonitor(t *testing.T, logger *logmon.Monitor, maxMetrics int, captureBufferMB int) *metricsMonitor {
 	t.Helper()
 	st, err := store.New("")
@@ -123,6 +197,15 @@ func chatRequest(model string) *http.Request {
 	return req
 }
 
+// audioTaskRequest builds a JSON POST to the /audioapi/v1/tasks/run endpoint
+// carrying the given model field.
+func audioTaskRequest(model string) *http.Request {
+	body := strings.NewReader(`{"model":"` + model + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/audioapi/v1/tasks/run", body)
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
 func TestServer_New_GroupConfig(t *testing.T) {
 	discard := logmon.NewWriter(io.Discard)
 	cfg := config.Config{HealthCheckTimeout: 15}
@@ -132,7 +215,7 @@ func TestServer_New_GroupConfig(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer st.Close()
-	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{})
+	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
 	if err != nil {
 		t.Fatalf("New (group): %v", err)
 	}
@@ -147,14 +230,22 @@ func TestServer_New_GroupConfig(t *testing.T) {
 func TestServer_New_MatrixConfig(t *testing.T) {
 	discard := logmon.NewWriter(io.Discard)
 	cfg := config.Config{HealthCheckTimeout: 15}
+	cfg.Models = map[string]config.ModelConfig{
+		"model": {
+			Cmd:   "echo ready",
+			Proxy: "http://localhost:8080",
+		},
+	}
 	cfg.Routing.Router.Use = "matrix"
-	cfg.Routing.Router.Settings.Matrix = &config.MatrixConfig{}
+	cfg.Routing.Router.Settings.Matrix = &config.MatrixConfig{
+		Sets: config.OrderedSets{{Name: "single", DSL: "model"}},
+	}
 	st, err := store.New("")
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
 	defer st.Close()
-	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{})
+	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
 	if err != nil {
 		t.Fatalf("New (matrix): %v", err)
 	}
@@ -200,6 +291,23 @@ func TestServer_RouteToPeerModel(t *testing.T) {
 	}
 }
 
+func TestServer_RouteToLocalModel_PrefersLocalCollision(t *testing.T) {
+	s := newTestServer(
+		newStubRouter([]string{"shared"}, "local response"),
+		newStubRouter([]string{"shared"}, "peer response"),
+	)
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, chatRequest("shared"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "local response" {
+		t.Errorf("body=%q want local response", w.Body.String())
+	}
+}
+
 func TestServer_UnknownModelReturns404(t *testing.T) {
 	s := newTestServer(
 		newStubRouter([]string{"local-model"}, ""),
@@ -211,6 +319,40 @@ func TestServer_UnknownModelReturns404(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 404 body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestServer_AudioAPIRoutesTaskRequest(t *testing.T) {
+	s := newTestServer(
+		newStubRouter([]string{"local-audio"}, "local audio response"),
+		newStubRouter(nil, ""),
+	)
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, audioTaskRequest("local-audio"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "local audio response" {
+		t.Errorf("body=%q want %q", w.Body.String(), "local audio response")
+	}
+}
+
+func TestServer_AudioAPIRewritesUpstreamPath(t *testing.T) {
+	var gotPath string
+	local := newStubRouter([]string{"m1"}, "")
+	local.serveHTTP = func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}
+	s := newTestServer(local, newStubRouter(nil, ""))
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, audioTaskRequest("m1"))
+
+	if gotPath != "/v1/tasks/run" {
+		t.Errorf("upstream path = %q, want /v1/tasks/run", gotPath)
 	}
 }
 
@@ -275,7 +417,7 @@ func TestServer_Unload(t *testing.T) {
 
 func TestServer_Running(t *testing.T) {
 	local := newStubRouter([]string{"m1"}, "")
-	local.running = map[string]process.ProcessState{"m1": process.StateReady}
+	local.setRunning(map[string]process.ProcessState{"m1": process.StateReady})
 	s := newTestServer(local, newStubRouter(nil, ""))
 	s.cfg = config.Config{Models: map[string]config.ModelConfig{
 		"m1": {
@@ -324,8 +466,8 @@ func TestServer_Preload(t *testing.T) {
 		OnStartup: config.HookOnStartup{Preload: []string{"m1"}},
 	}}
 
-	got := make(chan shared.ModelPreloadedEvent, 1)
-	cancel := event.On(func(e shared.ModelPreloadedEvent) { got <- e })
+	got := make(chan swaputil.ModelPreloadedEvent, 1)
+	cancel := event.On(func(e swaputil.ModelPreloadedEvent) { got <- e })
 	defer cancel()
 
 	s.startPreload()
@@ -337,6 +479,31 @@ func TestServer_Preload(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("preload event not received")
+	}
+}
+
+// TestServer_New_OnStartupProfile verifies New activates the configured startup profile.
+func TestServer_New_OnStartupProfile(t *testing.T) {
+	discard := logmon.NewWriter(io.Discard)
+	cfg := config.Config{HealthCheckTimeout: 15}
+	cfg.Profiles = map[string]config.ProfileConfig{
+		"coding": {Pins: map[string]string{"llm-code": "model"}},
+	}
+	cfg.Hooks.OnStartup.Profile = "coding"
+	st, err := store.New("")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer st.Close()
+	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
+	if err != nil {
+		t.Fatalf("New (startup profile): %v", err)
+	}
+	if got := s.ActiveProfile(); got != "coding" {
+		t.Fatalf("ActiveProfile()=%q want %q", got, "coding")
+	}
+	if err := s.Shutdown(time.Second); err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 }
 
