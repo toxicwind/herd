@@ -144,7 +144,9 @@ func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) err
 			return nil
 		}
 		// On miss, capture response for caching (only 200s)
-		rec := &cacheRecorder{ResponseWriter: w, body: &bytes.Buffer{}, status: 200}
+		// Use buffering recorder: the 401/429 status must NOT be committed to w
+		// before we decide whether to fall back to text.pollinations.ai.
+		rec := newBufferingRecorder()
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		// Clone request for text fallback if needed
 		origBody := make([]byte, len(bodyBytes))
@@ -163,13 +165,16 @@ func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) err
 			// Cache 60s for repeated prompts (CF edge style)
 			p.cache.Set(key, rec.body.Bytes(), 60*time.Second)
 		}
+		rec.replay(w)
 		return nil
 	}
 
-	// Non-cache path or streaming — direct proxy with fallback
-	rec := &statusRecorder{ResponseWriter: w, status: 200}
+	// Non-cache path or streaming — direct proxy with fallback.
+	// Use streaming-aware recorder: streams through on 200, suppresses 401/429
+	// so the fallback can write a clean response.
+	rec := newStreamingFallbackRecorder(w)
 	p.proxy.ServeHTTP(rec, r)
-	if rec.status == 401 || rec.status == 429 {
+	if rec.fallbackNeeded() {
 		// Fallback to text endpoint on auth/rate errors
 		r2 := r.Clone(r.Context())
 		p.textProxy.ServeHTTP(w, r2)
@@ -177,31 +182,94 @@ func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) err
 	return nil
 }
 
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	s.status = code
-	s.ResponseWriter.WriteHeader(code)
-}
-
-type cacheRecorder struct {
-	http.ResponseWriter
+// bufferingRecorder captures the full response (status, headers, body) without
+// writing to the underlying ResponseWriter. Call replay(w) to flush it after
+// deciding whether a fallback is needed. Used for the cache path where we
+// need the body for caching anyway.
+type bufferingRecorder struct {
+	header http.Header
 	body   *bytes.Buffer
 	status int
 }
 
-func (c *cacheRecorder) WriteHeader(code int) {
-	c.status = code
-	c.ResponseWriter.WriteHeader(code)
+func newBufferingRecorder() *bufferingRecorder {
+	return &bufferingRecorder{
+		header: make(http.Header),
+		body:   &bytes.Buffer{},
+		status: 200,
+	}
 }
-func (c *cacheRecorder) Write(b []byte) (int, error) {
-	c.body.Write(b)
-	return c.ResponseWriter.Write(b)
+
+func (b *bufferingRecorder) Header() http.Header { return b.header }
+
+func (b *bufferingRecorder) WriteHeader(code int) { b.status = code }
+
+func (b *bufferingRecorder) Write(data []byte) (int, error) {
+	return b.body.Write(data)
 }
-func (c *cacheRecorder) Header() http.Header { return c.ResponseWriter.Header() }
+
+// replay flushes the buffered response to w.
+func (b *bufferingRecorder) replay(w http.ResponseWriter) {
+	for k, vv := range b.header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(b.status)
+	w.Write(b.body.Bytes())
+}
+
+// streamingFallbackRecorder streams the response through on success (200),
+// but suppresses the status/headers/body on 401/429 so the caller can run
+// the text.pollinations.ai fallback with a clean ResponseWriter.
+type streamingFallbackRecorder struct {
+	w           http.ResponseWriter
+	header      http.Header
+	status      int
+	wroteHeader bool
+	suppress    bool
+}
+
+func newStreamingFallbackRecorder(w http.ResponseWriter) *streamingFallbackRecorder {
+	return &streamingFallbackRecorder{
+		w:      w,
+		header: make(http.Header),
+		status: 200,
+	}
+}
+
+func (s *streamingFallbackRecorder) Header() http.Header { return s.header }
+
+func (s *streamingFallbackRecorder) WriteHeader(code int) {
+	s.status = code
+	if code == 401 || code == 429 {
+		// Suppress: do not commit to w, caller will run fallback.
+		s.suppress = true
+		return
+	}
+	for k, vv := range s.header {
+		for _, v := range vv {
+			s.w.Header().Add(k, v)
+		}
+	}
+	s.w.WriteHeader(code)
+	s.wroteHeader = true
+}
+
+func (s *streamingFallbackRecorder) Write(b []byte) (int, error) {
+	if s.suppress {
+		// Discard the error body; fallback will write the real response.
+		return len(b), nil
+	}
+	if !s.wroteHeader {
+		s.WriteHeader(200)
+	}
+	return s.w.Write(b)
+}
+
+// fallbackNeeded reports whether the upstream returned 401/429 and the
+// response was suppressed for fallback.
+func (s *streamingFallbackRecorder) fallbackNeeded() bool { return s.suppress }
 
 func min(a, b int) int {
 	if a < b {
