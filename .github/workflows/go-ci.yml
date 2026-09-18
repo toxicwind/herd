@@ -32,6 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
 
+      # Pre-flight: fail fast on conflict markers / gofmt / scoped go vet before
+      # the expensive steps run. Same script as the fleet pre-push hook
+      # (/home/toxic/bin/push-guard.sh, debate d867e8f6).
+      - name: Pre-flight (push-guard)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=50 origin "${{ github.base_ref }}"
+            export PUSH_GUARD_RANGE="FETCH_HEAD...${{ github.sha }}"
+          else
+            export PUSH_GUARD_RANGE="${{ github.event.before }}...${{ github.sha }}"
+          fi
+          bash scripts/push-guard.sh
+
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c #6.4.0
         with:
