@@ -1,0 +1,20 @@
+{
+  "tokens": {
+    "access_token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1c2VyLWNlbnRlciIsImV4cCI6MTc4NjY5ODE0NSwiaWF0IjoxNzg...",
+    "refresh_token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ1c2VyLWNlbnRlciIsImV4cCI6MTc5MTg4MjE0NSwiaWF0IjoxNzg..."
+  },
+  "endpoints": {
+    "kernel_server": "http://localhost:8888",
+    "chrome_cdp": "http://localhost:9222",
+    "kasmvnc": "http://localhost:6901",
+    "proxy": "http://10.86.13.73:5900",
+    "k8s_api": "https://10.167.2.198:6443"
+  },
+  "internal_services": [
+    "172.29.160.117:443",
+    "100.64.149.250:443",
+    "100.115.44.53:80",
+    "100.100.135.131:80"
+  ],
+  "timestamp": 1784106313.183979
+}

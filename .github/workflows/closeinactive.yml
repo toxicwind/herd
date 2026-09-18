@@ -3,6 +3,8 @@ name: Close inactive issues
 on:
   schedule:
     - cron: "32 1 * * *"
+  # Allow manual runs to verify the workflow without waiting for the schedule.
+  workflow_dispatch:
 
 jobs:
   close-issues:

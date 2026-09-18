@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/env bun /home/toxic/sovereign/tools/sovereign-router/sovereign-router-ts/router.ts "$@"

@@ -1,0 +1,516 @@
+providers:
+  webSearchOrder:
+    - exa
+    - perplexity
+    - gemini
+    - anthropic
+    - codex
+    - xai
+    - zai
+    - tinyfish
+    - jina
+    - kagi
+    - tavily
+    - firecrawl
+    - brave
+    - kimi
+    - parallel
+    - synthetic
+    - searxng
+    - startpage
+    - duckduckgo
+    - ecosia
+    - google
+    - mojeek
+    - public
+  anthropic:
+    serverSideFallback: false
+  autoThinkingModel: online
+  autoThinkingMaxEffort: xhigh
+  memoryModel: online
+  maxInFlightRequests:
+    {}
+  openai-codex:
+    codeMode: "off"
+    codeModeDirectTools:
+      []
+  ollama-cloud:
+    maxConcurrency: 3
+  openai-compatible:
+    baseUrl: http://127.0.0.1:25100/v1
+    apiKey: llama-swap
+  webSearchExclude:
+    []
+  webSearchTimeoutSeconds: 60
+  antigravityEndpoint: auto
+  imageOrder:
+    []
+  fireworksTier: standard
+  tts: auto
+  tinyModel: online
+  tinyModelDevice: default
+  tinyModelDtype: default
+  unexpectedStopModel: online
+  kimiApiFormat: auto
+  openaiWebsockets: auto
+  cacheRetention: auto
+  streamFirstEventTimeoutSeconds: -1
+  streamIdleTimeoutSeconds: -1
+  unboundedRetryAfter:
+    - opencode-go
+    - opencode-zen
+  openrouterVariant: default
+  fetch: auto
+modelRoles:
+  default: openrouter/inclusionai/ling-3.0-flash-fin:free:high
+  task: qwen/qwen3.6-35b-a3b:high
+  slow: qwen/qwen3.6-35b-a3b:high
+  plan: qwen/qwen3.6-35b-a3b:high
+  smol: qwen/qwen3.6-27b:high
+  tiny: qwen/qwen3.6-27b:high
+subagents:
+  can_spawn_subagents: true
+  whitelist:
+    - task
+    - plan
+    - review
+    - auditor
+    - critic
+    - explorer
+    - analyst
+    - debugger
+  defaultModel: qwen/qwen3.6-35b-a3b:high
+  subagent: inherit
+tools:
+  approvalMode: yolo
+  intentTracing: true
+  xdev: true
+  xdevDocs: builtins
+  approval:
+    {}
+  format: auto
+  artifactSpillThreshold: 50
+  artifactTailBytes: 20
+  artifactHeadBytes: 20
+  outputMaxColumns: 768
+  artifactTailLines: 500
+  abortOnFabricatedResult: true
+  maxTimeout: 0
+  xdevInlineDevices:
+    []
+task:
+  batch: true
+  maxConcurrency: 32
+  enableLsp: true
+  showResolvedModelBadge: false
+  isolation:
+    mode: none
+    apply: false
+    merge: patch
+    commits: generic
+  eager: default
+  enableEffort: false
+  maxRecursionDepth: 2
+  maxRuntimeMs: 0
+  agentIdleTtlMs: 420000
+  softRequestBudget: 200
+  softRequestBudgetNotice: true
+  maxEffort: max
+  prewalk: false
+interruptMode: wait
+steeringMode: one-at-a-time
+followUpMode: one-at-a-time
+appearance:
+  theme: dark-midnight
+  compact: true
+symbolPreset: nerd
+composer:
+  shape: box
+theme:
+  dark: dark-midnight
+  light: light
+setupVersion: 2
+defaultThinkingLevel: high
+hideThinkingBlock: false
+memory:
+  backend: hindsight
+hindsight:
+  apiUrl: http://127.0.0.1:25117
+  scoping: per-project-tagged
+  autoRecall: true
+  autoRetain: true
+  retainMode: full-session
+  mentalModelsEnabled: true
+  mentalModelAutoSeed: true
+temperature: 1
+effort:
+  high: 0.9
+  ultrathink: 0.99
+colorBlindMode: false
+statusLine:
+  preset: default
+  separator: powerline-thin
+  contextLine: embedded
+  sessionAccent: true
+  transparent: false
+  compactThinkingLevel: false
+  showHookStatus: true
+terminal:
+  showImages: true
+  showProgress: false
+images:
+  autoResize: true
+  blockImages: false
+  describeForTextModels: true
+  urls:
+    enabled: false
+    backends:
+      - provider-files
+      - tailscale
+      - cloudflared
+      - litterbox
+    ttlHours: 72
+    bindHost: 127.0.0.1
+    sshRemotePort: 8787
+tui:
+  resizeScrollback: rebuild
+  textSizing: false
+  renderMermaid: true
+  codexResetFireworks: false
+  titleState: true
+  hyperlinks: auto
+  tight: false
+  imeSafeCursor: false
+display:
+  shimmer: classic
+  smoothStreaming: true
+  hideToolActivity: false
+  showTokenUsage: false
+  showTurnTime: false
+  cacheMissMarker: false
+  collapseCompacted: true
+showHardwareCursor: true
+advisor:
+  enabled: false
+  syncBacklog: "off"
+  immuneTurns: 3
+prewalk:
+  enabled: false
+modelRoleStorage: global
+proseOnlyThinking: true
+omitThinking: false
+externalThinking: false
+model:
+  loopGuard:
+    enabled: false
+    checkAssistantContent: true
+    toolCallReminder: true
+  toolCallLoopGuard:
+    enabled: true
+    threshold: 5
+    exemptTools:
+      - hub
+inlineToolDescriptors: auto
+includeModelInPrompt: true
+includeWorkspaceTree: false
+personality: default
+topP: -1
+topK: -1
+minP: -1
+presencePenalty: -1
+repetitionPenalty: -1
+textVerbosity: medium
+tier:
+  openai: none
+  anthropic: none
+  google: none
+  subagent: inherit
+  advisor: none
+retry:
+  maxRetries: 10
+  maxDelayMs: 300000
+  modelFallback: true
+  usageAwareFallback: false
+  usageReservePct: 10
+  usageReservePolicy: confirm
+  fallbackChains:
+    {}
+  fallbackRevertPolicy: cooldown-expiry
+autoResume: false
+power:
+  sleepPrevention: idle
+git:
+  enabled: true
+loop:
+  mode: prompt
+doubleEscapeAction: tree
+treeFilterMode: default
+autocompleteMaxVisible: 10
+spelling:
+  typoDetection: true
+  autocomplete: true
+  autocorrect: false
+emojiAutocomplete: true
+paste:
+  largeMenuThreshold: 100
+startup:
+  quiet: false
+  showSplash: false
+  setupWizard: true
+  checkUpdate: true
+  changelogMode: summary
+update:
+  channel: stable
+marketplace:
+  autoUpdate: notify
+magicKeywords:
+  enabled: true
+  ultrathink: true
+  orchestrate: true
+  workflow: true
+completion:
+  notify: "on"
+error:
+  notify: "off"
+ask:
+  timeout: 0
+  notify: "on"
+  enabled: true
+recap:
+  enabled: true
+  idleSeconds: 240
+collab:
+  relayUrl: wss://my.omp.sh
+  webUrl: ""
+  displayName: ""
+share:
+  serverUrl: https://my.omp.sh/s
+  store: blob
+  redactSecrets: true
+stt:
+  enabled: false
+  modelName: parakeet
+  submitTrigger: never
+features:
+  unexpectedStopDetection: mechanical
+workspace:
+  additionalDirectories:
+    []
+contextPromotion:
+  enabled: false
+extendedContext: true
+compaction:
+  enabled: true
+  midTurnEnabled: true
+  methodOrder:
+    - remote
+    - snapcompact
+    - handoff
+    - shake
+    - soft
+  thresholdPercent: 99
+  thresholdTokens: -1
+  handoffSaveToDisk: false
+  remoteStreamingV2Enabled: true
+  asyncEnabled: true
+  idleEnabled: false
+  idleThresholdTokens: 200000
+  idleTimeoutSeconds: 300
+  supersedeReads: true
+  dropUseless: true
+snapcompact:
+  systemPrompt: none
+  toolResults: false
+  shape: auto
+branchSummary:
+  enabled: false
+ttsr:
+  enabled: true
+  contextMode: discard
+  interruptMode: always
+  repeatMode: once
+  repeatGap: 10
+  builtinRules: true
+  disabledRules:
+    []
+autolearn:
+  enabled: false
+  autoContinue: false
+mnemopi:
+  scoping: per-project
+  embeddingVariant: en
+  autoRecall: true
+  autoRetain: true
+  polyphonicRecall: false
+  enhancedRecall: false
+  proactiveLinking: false
+  noEmbeddings: false
+  llmMode: smol
+edit:
+  mode: hashline
+  fuzzyMatch: true
+  fuzzyThreshold: 0.95
+  streamingAbort: false
+  blockAutoGenerated: true
+  enforceSeenLines: false
+  blackbox:
+    enabled: false
+  autoRepair:
+    enabled: false
+readLineNumbers: false
+read:
+  defaultLimit: 300
+  renderMarkdown: false
+  summarize:
+    enabled: true
+    prose: false
+    minBodyLines: 4
+    minCommentLines: 6
+    minTotalLines: 100
+    unfoldUntil: 50
+    unfoldLimit: 100
+  toolResultPreview: false
+lsp:
+  enabled: true
+  lazy: true
+  shared: true
+  formatOnWrite: false
+  diagnosticsOnWrite: true
+  diagnosticsOnEdit: false
+  diagnosticsDeduplicate: true
+bash:
+  enabled: true
+  autoBackground:
+    enabled: true
+  patterns:
+    []
+  direnv: auto
+  direnvLoadTimeoutMs: 30000
+bashInterceptor:
+  enabled: false
+shellMinimizer:
+  enabled: true
+  sourceOutlineLevel: "off"
+eval:
+  py: true
+  js: true
+  rb: false
+  jl: false
+  autoBackground:
+    enabled: false
+python:
+  kernelMode: session
+  interpreter: ""
+ruby:
+  interpreter: ""
+julia:
+  interpreter: ""
+todo:
+  enabled: true
+  reminders: true
+  remindersMax: 3
+  eager: default
+glob:
+  enabled: true
+grep:
+  enabled: true
+  contextBefore: 1
+  contextAfter: 3
+astGrep:
+  enabled: false
+astEdit:
+  enabled: true
+debug:
+  enabled: true
+launch:
+  enabled: true
+speechgen:
+  enabled: false
+generate_image:
+  enabled: false
+inspect_image:
+  mode: auto
+  timeoutMs: 300000
+computer:
+  enabled: false
+  display: all
+  maxWidth: 3840
+  maxHeight: 2400
+checkpoint:
+  enabled: false
+fetch:
+  enabled: true
+vault:
+  enabled: false
+github:
+  enabled: false
+  cache:
+    enabled: true
+    softTtlSec: 300
+    hardTtlSec: 604800
+web_search:
+  enabled: true
+security:
+  enabled: false
+browser:
+  enabled: true
+  relay: false
+  headless: true
+  cmux: true
+async:
+  enabled: true
+  pollWaitDuration: smart
+irc:
+  timeoutMs: 120000
+mcp:
+  enableProjectConfig: true
+  renderMarkdownResults: true
+  notifications: false
+  notificationDebounceMs: 500
+tasks:
+  todoClearDelay: 60
+extensionHandlers:
+  toolCallTimeoutMs: 30000
+dev:
+  autoqa: true
+  autoqaPush:
+    endpoint: https://qa.omp.sh/v1/grievances
+plan:
+  enabled: true
+  defaultOnStartup: false
+goal:
+  enabled: true
+  statusInFooter: true
+  continuationModes:
+    - interactive
+title:
+  refreshOnReplan: true
+skills:
+  enableSkillCommands: true
+commands:
+  enableClaudeUser: true
+  enableClaudeProject: true
+  enableOpencodeUser: true
+  enableOpencodeProject: true
+secrets:
+  enabled: false
+live:
+  voice: sol
+tts:
+  localModel: kokoro
+  localVoice: af_heart
+speech:
+  enabled: false
+  mode: assistant
+  enhanced: false
+  voice: af_heart
+codexResets:
+  autoRedeem: unset
+  minBlockedMinutes: 60
+  keepCredits: 0
+  salvageHorizonHours: 12
+provider:
+  appendOnlyContext: auto
+exa:
+  enabled: true
+  searchDelayMs: 1000

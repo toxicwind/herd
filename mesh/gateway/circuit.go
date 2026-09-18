@@ -6,6 +6,10 @@ import (
 )
 
 type CircuitState int
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main
 const (
 	StateClosed CircuitState = iota
 	StateOpen
@@ -13,6 +17,7 @@ const (
 )
 
 type CircuitBreaker struct {
+<<<<<<< HEAD
 	state          CircuitState
 	failureCount   int
 	successCount   int
@@ -28,13 +33,36 @@ type CircuitRegistry struct {
 	breakers map[string]*CircuitBreaker
 	failureThreshold int
 	timeout  time.Duration
+=======
+	state            CircuitState
+	failureCount     int
+	successCount     int
+	failureThreshold int
+	halfOpenMaxCalls int
+	timeout          time.Duration
+	lastFailure      time.Time
+	mu               sync.RWMutex
+}
+
+type CircuitRegistry struct {
+	mu               sync.Mutex
+	breakers         map[string]*CircuitBreaker
+	failureThreshold int
+	timeout          time.Duration
+>>>>>>> origin/main
 }
 
 func NewCircuitRegistry(failureThreshold int, timeout time.Duration) *CircuitRegistry {
 	return &CircuitRegistry{
+<<<<<<< HEAD
 		breakers: make(map[string]*CircuitBreaker),
 		failureThreshold: failureThreshold,
 		timeout: timeout,
+=======
+		breakers:         make(map[string]*CircuitBreaker),
+		failureThreshold: failureThreshold,
+		timeout:          timeout,
+>>>>>>> origin/main
 	}
 }
 
@@ -44,17 +72,28 @@ func (cr *CircuitRegistry) get(name string) *CircuitBreaker {
 	cb, ok := cr.breakers[name]
 	if !ok {
 		cb = &CircuitBreaker{
+<<<<<<< HEAD
 			state: StateClosed,
 			failureThreshold: cr.failureThreshold,
 			halfOpenMaxCalls: 3,
 			timeout: cr.timeout,
+=======
+			state:            StateClosed,
+			failureThreshold: cr.failureThreshold,
+			halfOpenMaxCalls: 3,
+			timeout:          cr.timeout,
+>>>>>>> origin/main
 		}
 		cr.breakers[name] = cb
 	}
 	return cb
 }
 
+<<<<<<< HEAD
 func (cr *CircuitRegistry) Allow(name string) bool { return cr.get(name).Allow() }
+=======
+func (cr *CircuitRegistry) Allow(name string) bool    { return cr.get(name).Allow() }
+>>>>>>> origin/main
 func (cr *CircuitRegistry) RecordSuccess(name string) { cr.get(name).RecordSuccess() }
 func (cr *CircuitRegistry) RecordFailure(name string) { cr.get(name).RecordFailure() }
 

@@ -1,5 +1,6 @@
 .aider*
 .env
+.env.local
 build/
 dist/
 .vscode
@@ -24,9 +25,15 @@ cmd/bench-orchestrator/bench-orchestrator
 *.new
 
 
+<<<<<<< HEAD
 # token-scrub 2026-09-14: never commit secrets
 *.pat
 github_*_pat.json
 .env*
 *secret*
 *token*
+=======
+# Local llama-server engine builds (third-party sources + binaries, not committed)
+engines/
+__pycache__/
+>>>>>>> origin/main

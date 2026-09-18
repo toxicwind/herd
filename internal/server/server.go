@@ -10,16 +10,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mostlygeek/llama-swap/internal/astmatrix"
 	"github.com/mostlygeek/llama-swap/internal/chain"
 	"github.com/mostlygeek/llama-swap/internal/config"
+	"github.com/mostlygeek/llama-swap/internal/docagent"
 	"github.com/mostlygeek/llama-swap/internal/event"
+	"github.com/mostlygeek/llama-swap/internal/freeproxy"
+	"github.com/mostlygeek/llama-swap/internal/hw"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
+	"github.com/mostlygeek/llama-swap/internal/mcptools"
 	"github.com/mostlygeek/llama-swap/internal/perf"
 	"github.com/mostlygeek/llama-swap/internal/process"
 	"github.com/mostlygeek/llama-swap/internal/router"
-	"github.com/mostlygeek/llama-swap/internal/shared"
 	"github.com/mostlygeek/llama-swap/internal/store"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 )
 
 // Server owns the HTTP mux, cross-cutting middleware, and the local/peer model
@@ -37,13 +40,28 @@ type Server struct {
 	metrics  *metricsMonitor
 	store    *store.Store
 	build    BuildInfo
+	hardware *hw.HardwareSnapshot
+
+	// reference is llama-swap's own embedded documentation, served to the
+	// Playground's agentic chat and to external MCP clients through /api/mcp.
+	// It is immutable and independent of cfg, so the same library is shared
+	// across the Server instances a hot config reload creates. A nil value
+	// disables the endpoint; Docs methods are nil-receiver safe.
+	reference *docagent.Docs
+
+	// tools is the MCP tool surface served at /api/mcp. Providers are
+	// aggregated here rather than enumerated in the handler, so a future
+	// provider that proxies an upstream MCP endpoint plugs in without
+	// touching the transport.
+	tools *mcptools.Registry
 
 	profileMu     sync.RWMutex
 	activeProfile string
 
-	local router.LocalRouter
-	peer  router.Router
-	cloud *astmatrix.Router // cloud model routing via AST Matrix
+	local     router.LocalRouter
+	peer      router.Router
+	cloud     *flockCloud         // cloud model routing via Flock delegation (:8000)
+	freeproxy *freeproxy.Registry // maximal modular free providers (pollinations, ovh, openrouter, cf-gw) — borrows tau providers
 
 	// modelEvents broadcasts the /models/sse feed Zed's llama.cpp
 	// provider subscribes to. The proxy owns model lifecycle truth,
@@ -84,7 +102,7 @@ func (s *Server) setActiveProfile(name string) (bool, error) {
 	s.profileMu.Unlock()
 
 	s.proxylog.Infof("active profile changed to %q", name)
-	event.Emit(shared.ProfileChangedEvent{Active: name})
+	event.Emit(swaputil.ProfileChangedEvent{Active: name})
 	return true, nil
 }
 
@@ -107,6 +125,9 @@ var modelPostJSONRoutes = []string{
 	"/v1/images/generations",
 	"/sdapi/v1/txt2img",
 	"/sdapi/v1/img2img",
+
+	// audio.cpp generic task API
+	"/audioapi/v1/tasks/run",
 
 	// versionless routes, the /v/ is stripped before the request is forwarded upstream
 	// see issue #728
@@ -162,7 +183,7 @@ type BuildInfo struct {
 	Date    string
 }
 
-func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, upstreamlog *logmon.Monitor, perfMon *perf.Monitor, st *store.Store, build BuildInfo) (*Server, error) {
+func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, upstreamlog *logmon.Monitor, perfMon *perf.Monitor, st *store.Store, build BuildInfo, hardware *hw.HardwareSnapshot, refs *docagent.Docs) (*Server, error) {
 	var local router.LocalRouter
 	var err error
 
@@ -183,56 +204,63 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 	if err != nil {
 		return nil, fmt.Errorf("creating peer router: %w", err)
 	}
+	// Maximal modular freeproxy (pollinations, ovh, openrouter, cf-gw) — borrows tau providers concept
+	// Default cache is global home/toxic: $HOME/cache/freeproxy (sovereign global, not /tmp)
+	freeproxyRegistry := freeproxy.NewRegistry(freeproxy.NewMemoryLimiter(15*time.Second), freeproxy.NewGlobalCache())
+	proxylog.Infof("freeproxy modular enabled: providers=%d models=%d cache=%s", len(freeproxyRegistry.Models()), len(freeproxyRegistry.Models()), "home/toxic/cache/freeproxy")
 
-	// Initialize cloud router (AST Matrix) if configured.
-	var cloud *astmatrix.Router
-	if cfg.AstMatrix != nil && cfg.AstMatrix.Enabled {
-		amCfg := &astmatrix.AstMatrixConfig{
-			Enabled:     cfg.AstMatrix.Enabled,
-			Strategy:    cfg.AstMatrix.Strategy,
-			MaxParallel: cfg.AstMatrix.MaxParallel,
-			DbPath:      cfg.AstMatrix.DbPath,
-			StickyTTL:   cfg.AstMatrix.StickyTTL,
-			FifoMax:     cfg.AstMatrix.FifoMax,
-		}
-		amCfg.Providers = make(map[string]astmatrix.ProviderCfg)
-		for name, pcfg := range cfg.AstMatrix.Providers {
-			amCfg.Providers[name] = astmatrix.ProviderCfg{
-				BaseURL:  pcfg.BaseURL,
-				KeyEnv:   pcfg.KeyEnv,
-				KeyEnvAlt: pcfg.KeyEnvAlt,
-				NoAuth:   pcfg.NoAuth,
-			}
-		}
-		cloud, err = astmatrix.NewRouter(amCfg, proxylog)
-		if err != nil {
-			return nil, fmt.Errorf("creating astmatrix router: %w", err)
-		}
-		proxylog.Infof("astmatrix cloud router enabled: strategy=%s providers=%d", cfg.AstMatrix.Strategy, len(cloud.Matrix().Providers()))
+	// Initialize cloud delegation (Flock) if configured. The in-process
+	// astmatrix.Router was retired 2026-09-17; Flock (:8000) is the unified
+	// multi-provider remote-API/completions subsystem behind :25100.
+	var cloud *flockCloud
+	if cfg.Flock != nil {
+		cfg.Flock.Defaults()
 	}
-
+	if cfg.Flock != nil && cfg.Flock.Enabled {
+		cloud = newFlockCloud(cfg.Flock, proxylog)
+		proxylog.Infof("flock cloud delegation enabled: base=%s aliases=%d", cfg.Flock.BaseURL, len(cfg.Flock.ModelMap))
+	}
+	if cfg.AstMatrix != nil && cfg.AstMatrix.Enabled {
+		proxylog.Warnf("astMatrix config block is retired and ignored; configure flock: instead")
+	}
 	if st == nil {
 		return nil, fmt.Errorf("store is required")
 	}
 
 	shutdownCtx, shutdownFn := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:         cfg,
-		muxlog:      muxlog,
-		proxylog:    proxylog,
-		upstreamlog: upstreamlog,
-		perf:        perfMon,
-		inflight:    newInflightTracker(),
-		metrics:     newMetricsMonitor(proxylog, cfg.MetricsMaxInMemory, cfg.CaptureBuffer, st),
-		store:       st,
-		build:       build,
-		local:       local,
-		peer:        peer,
-		cloud:       cloud,
-		modelEvents: newModelEventBroadcaster(muxlog),
-		shutdownCtx: shutdownCtx,
-		shutdownFn:  shutdownFn,
+		cfg:           cfg,
+		muxlog:        muxlog,
+		proxylog:      proxylog,
+		upstreamlog:   upstreamlog,
+		perf:          perfMon,
+		inflight:      newInflightTracker(),
+		metrics:       newMetricsMonitor(proxylog, cfg.MetricsMaxInMemory, cfg.CaptureBuffer, st),
+		store:         st,
+		build:         build,
+		hardware:      hardware,
+		reference:     refs,
+		activeProfile: cfg.Hooks.OnStartup.Profile,
+		local:         local,
+		peer:          peer,
+		cloud:         cloud,
+		freeproxy:     freeproxyRegistry,
+		modelEvents:   newModelEventBroadcaster(muxlog),
+		shutdownCtx:   shutdownCtx,
+		shutdownFn:    shutdownFn,
 	}
+	// SysProvider is constructed here because this is where perf and hardware
+	// are in scope; wiring those in later is a change to internal/mcptools.
+	tools, err := mcptools.New(
+		docagent.NewDocsProvider(refs),
+		mcptools.NewSysProvider(nil),
+		config.NewConfigProvider(cfg),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("building the MCP tool registry: %w", err)
+	}
+	s.tools = tools
+
 	s.routes()
 	s.startPreload()
 	// Continuously reconcile model load/unload state and broadcast transitions
@@ -277,13 +305,14 @@ func (s *Server) watchModelState(interval time.Duration) {
 }
 
 // localPeerHandler dispatches a model-routed request to the local or peer
-// router. The model is resolved once via shared.FetchContext.
+// router. The model is resolved once via swaputil.FetchContext.
 func (s *Server) localPeerHandler(w http.ResponseWriter, r *http.Request) {
 	stripVersionPrefix(r)
+	stripAudioAPIPrefix(r)
 
-	data, err := shared.FetchContext(r, s.cfg)
+	data, err := swaputil.FetchContext(r, s.cfg)
 	if err != nil {
-		shared.SendError(w, r, shared.ErrNoModelInContext)
+		swaputil.SendError(w, r, swaputil.ErrNoModelInContext)
 		return
 	}
 
@@ -291,14 +320,21 @@ func (s *Server) localPeerHandler(w http.ResponseWriter, r *http.Request) {
 	case s.local.Handles(data.ModelID):
 		s.proxylog.Debugf("dispatch: using local process for model: %s", data.ModelID)
 		s.local.ServeHTTP(w, r)
+	case s.freeproxy != nil && s.freeproxy.Handles(data.ModelID):
+		if p, ok := s.freeproxy.ProviderFor(data.ModelID); ok {
+			s.proxylog.Debugf("dispatch: using freeproxy %s for model: %s", p.ID(), data.ModelID)
+			p.Proxy(w, r)
+			return
+		}
+		swaputil.SendError(w, r, router.ErrNoRouterFound)
 	case s.peer.Handles(data.ModelID):
 		s.proxylog.Debugf("dispatch: using peer for model: %s", data.ModelID)
 		s.peer.ServeHTTP(w, r)
 	case s.cloud != nil && s.cloud.Handles(data.ModelID):
-		s.proxylog.Debugf("dispatch: using cloud matrix for model: %s", data.ModelID)
+		s.proxylog.Debugf("dispatch: using flock cloud delegation for model: %s", data.ModelID)
 		s.cloud.ServeHTTP(w, r)
 	default:
-		shared.SendError(w, r, router.ErrNoRouterFound)
+		swaputil.SendError(w, r, router.ErrNoRouterFound)
 	}
 }
 
@@ -310,6 +346,15 @@ func stripVersionPrefix(r *http.Request) {
 	}
 }
 
+// stripAudioAPIPrefix rewrites /audioapi/... requests to their /... form
+// before forwarding upstream, so /audioapi/v1/tasks/run reaches the upstream
+// as /v1/tasks/run.
+func stripAudioAPIPrefix(r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/audioapi") {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/audioapi")
+	}
+}
+
 // routes builds the mux, registers every route, and wraps the mux with the
 // global CORS middleware.
 func (s *Server) routes() {
@@ -318,8 +363,9 @@ func (s *Server) routes() {
 	modelChain := chain.New(
 		authMW,
 		CreateProfileMiddleware(s),
+		CreateSelectorMiddleware(s),
 		CreateRequestContextMiddleware(s.cfg),
-		CreateInflightMiddleware(s.inflight),
+		CreateInflightMiddleware(s.inflight, s.cfg),
 		CreateFilterMiddleware(s.cfg),
 		CreateFormFilterMiddleware(s.cfg),
 		CreateMetricsMiddleware(s.metrics, s.cfg),
@@ -342,6 +388,7 @@ func (s *Server) routes() {
 
 	// llama-swap API + custom endpoints.
 	mux.Handle("GET /v1/models", apiChain.ThenFunc(s.handleListModels))
+	mux.Handle("GET /models", apiChain.ThenFunc(s.handleListModels))
 	// llama.cpp-compatible model event feed (Zed /models/sse consumer).
 	mux.Handle("GET /models/sse", apiChain.ThenFunc(s.handleModelEvents))
 	mux.Handle("GET /logs", apiChain.ThenFunc(s.handleLogs))
@@ -373,6 +420,12 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /upstream", handleUpstreamRedirect)
 	mux.Handle("/upstream/{upstreamPath...}", upstreamChain.ThenFunc(s.handleUpstream))
 
+	// ComfyUI compatibility passthrough. This uses the fixed comfyui_auto model,
+	// whose compatibility settings are applied while loading config. Only the
+	// root path may start an unloaded model.
+	mux.Handle("/comfyui", apiChain.ThenFunc(handleComfyUIRedirect))
+	mux.Handle("/comfyui/{comfyPath...}", apiChain.ThenFunc(s.handleComfyUI))
+
 	// API group (API-key protected) consumed by the UI.
 	mux.Handle("POST /api/models/unload", apiChain.ThenFunc(s.handleAPIUnloadAll))
 	mux.Handle("POST /api/models/unload/{model...}", apiChain.ThenFunc(s.handleAPIUnloadModel))
@@ -384,7 +437,14 @@ func (s *Server) routes() {
 	mux.Handle("GET /api/metrics/stats", apiChain.ThenFunc(s.handleAPIActivityStats))
 	mux.Handle("GET /api/performance", apiChain.ThenFunc(s.handleAPIPerformance))
 	mux.Handle("GET /api/version", apiChain.ThenFunc(s.handleAPIVersion))
+	mux.Handle("GET /api/hardware", apiChain.ThenFunc(s.handleAPIHardware))
 	mux.Handle("GET /api/captures/{id}", apiChain.ThenFunc(s.handleAPICapture))
+
+	// Stateless MCP server exposing llama-swap's own documentation as tools,
+	// consumed by the Playground's agentic chat and by any external MCP client.
+	// Registered without a method so non-POST reaches the handler and gets a
+	// 405 with Allow, rather than the mux's bare 404.
+	mux.Handle("/api/mcp", apiChain.ThenFunc(s.handleAPIMCP))
 
 	s.mux = mux
 	s.handler = chain.New(CreateRequestLogMiddleware(s.proxylog), CreateCORSMiddleware()).Then(mux)
@@ -418,6 +478,13 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	var mu sync.Mutex
 	var errs []error
 
+	// Server.Shutdown is a closed list: anything holding resources that is not
+	// released here leaks. The tool registry is cheap today and expensive once
+	// a provider holds upstream connections or subprocesses.
+	if err := s.tools.Shutdown(timeout); err != nil {
+		errs = append(errs, err)
+	}
+
 	for _, rt := range []router.Router{s.local, s.peer} {
 		if rt == nil {
 			continue
@@ -433,18 +500,7 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		}(rt)
 	}
 
-	// Close the cloud router's health database.
-	if s.cloud != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := s.cloud.Close(); err != nil {
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
-			}
-		}()
-	}
+	// flockCloud holds no provider state to close; Flock owns health/circuits.
 
 	wg.Wait()
 	return errors.Join(errs...)

@@ -150,7 +150,7 @@ func TestDisabledModels_Sorted(t *testing.T) {
 func TestDisabledModels_IgnoresNonBoolean(t *testing.T) {
 	m := &ModelsYML{Providers: map[string]ProviderConfig{
 		"herd": {ModelOverrides: map[string]map[string]any{
-			"x": {"disabled": "yes"},  // string, not bool
+			"x": {"disabled": "yes"}, // string, not bool
 			"y": {"disabled": true},
 		}},
 	}}
