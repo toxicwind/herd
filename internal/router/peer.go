@@ -221,13 +221,16 @@ func (r *Peer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+pp.apiKey)
 		req.Header.Set("x-api-key", pp.apiKey)
 	} else {
-		// Workaround for "not anonymous" gate (Pollinations now requires any Bearer to avoid 401).
-		// We ignore anonymous distinction entirely: inject dummy Bearer so free tier always passes.
-		// ponytail: dummy bearer for free backends; use real key via peer.apiKey if rate-limit matters
-		req.Header.Set("Authorization", "Bearer pollinations-free-workaround")
-		req.Header.Set("x-api-key", "pollinations-free-workaround")
+		// Keyless design (2026-09-20): the free route (text.pollinations.ai/openai)
+		// takes NO auth. The old dummy-Bearer test hack is dead -- gen.pollinations.ai
+		// 401s without a real key, so the dummy bought nothing. Send no credentials;
+		// also strip any client-supplied Authorization so client keys never leak upstream.
+		req.Header.Del("Authorization")
+		req.Header.Del("x-api-key")
 	}
-	r.logger.Debugf("peer: outgoing Authorization=%s Host=%s Path=%s", req.Header.Get("Authorization"), req.Host, req.URL.Path)
+	// SECURITY P2 (pollinations-deep-audit-2026-06-27): NEVER log credential material --
+	// not the full value, not even a prefix. Presence bit only.
+	r.logger.Debugf("peer: outgoing auth=%t Host=%s Path=%s", req.Header.Get("Authorization") != "", req.Host, req.URL.Path)
 	// Cancel the proxy request when the client disconnects or shutdown times out.
 	// Deriving from the request covers the client half directly and keeps the
 	// request's context values — notably the client context that tells a real

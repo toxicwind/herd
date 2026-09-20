@@ -339,16 +339,16 @@ func TestPeer_ServeHTTP_NoApiKey(t *testing.T) {
 
 	pr.ServeHTTP(w, req)
 
-	if receivedAuthHeader != "Bearer pollinations-free-workaround" {
-		t.Errorf("expected dummy workaround bearer, got %q", receivedAuthHeader)
+	if receivedAuthHeader != "" {
+		t.Errorf("expected no Authorization header in keyless mode, got %q", receivedAuthHeader)
 	}
-	if receivedXApiKey != "pollinations-free-workaround" {
-		t.Errorf("expected x-api-key workaround, got %q", receivedXApiKey)
+	if receivedXApiKey != "" {
+		t.Errorf("expected no x-api-key header in keyless mode, got %q", receivedXApiKey)
 	}
 }
 
 func TestPeer_ServeHTTP_NoApiKey_StripsClientAuth(t *testing.T) {
-	// Client sends dummy auth, peer with empty apiKey must override with workaround (not leak client key)
+	// Client sends auth; peer with empty apiKey must strip it (never leak client keys upstream)
 	var receivedAuth string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuth = r.Header.Get("Authorization")
@@ -366,8 +366,8 @@ func TestPeer_ServeHTTP_NoApiKey_StripsClientAuth(t *testing.T) {
 	*req = *req.WithContext(swaputil.SetContext(req.Context(), swaputil.ReqContextData{Model: "test-model", ModelID: "test-model"}))
 	w := httptest.NewRecorder()
 	pr.ServeHTTP(w, req)
-	if receivedAuth != "Bearer pollinations-free-workaround" {
-		t.Errorf("expected workaround bearer to override client key, got %q", receivedAuth)
+	if receivedAuth != "" {
+		t.Errorf("expected client Authorization to be stripped in keyless mode, got %q", receivedAuth)
 	}
 }
 

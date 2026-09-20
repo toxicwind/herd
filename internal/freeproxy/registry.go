@@ -25,9 +25,10 @@ func NewRegistry(limiter RateLimiter, cache Cache) *Registry {
 	// Order matters: Cloudflare gateway first (caching), then direct pollinations, then others
 	r.providers = []Provider{
 		NewCloudflareGatewayProvider(),
-		NewPollinationsProvider(limiter, cache),
+		NewPollinationsProvider(cache),
 		NewOVHProvider(),
 		NewOpenRouterProvider(),
+		NewLLM7Provider(),
 	}
 	for _, p := range r.providers {
 		for _, m := range p.Models() {

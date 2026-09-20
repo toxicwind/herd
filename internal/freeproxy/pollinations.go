@@ -13,38 +13,86 @@ import (
 	"time"
 )
 
-// PollinationsProvider proxies to https://gen.pollinations.ai with anonymous workaround.
-// It ignores the "not anonymous" gate by injecting a dummy Bearer when no key is configured.
-// Falls back to https://text.pollinations.ai when gen returns 401/429.
+// PollinationsProvider — the real free path (verified live 2026-09-20).
+//
+// This is NOT a hack: it is Pollinations' documented legacy anonymous lane.
+// Their own 404 body says it outright: "The Pollinations legacy text API is being
+// deprecated for authenticated users... Anonymous requests to text.pollinations.ai
+// are NOT affected." Deliberate policy, not an accident.
+//
+//	POST https://text.pollinations.ai/openai/v1/chat/completions, NO key,
+//	model "openai" (resolves to gpt-oss-20b) → HTTP 200 in ~240-550ms.
+//
+// Rules baked in from the deep-dig (2026-09-20):
+//   - Exactly ONE anonymous model exists. /models lists only "openai-fast"
+//     (tier "anonymous"); any other model name 404s. Keyless mode therefore
+//     advertises and handles ONLY "openai". Do not request others.
+//   - Anonymous lane allows 1 CONCURRENT request per IP ("Queue full for IP").
+//     The provider serializes keyless upstream calls client-side (semaphore
+//     of 1, bounded wait, 429 if the slot stays busy).
+//   - Never touch the shared-key lane: classic GET /{prompt}?model=openai runs
+//     on a shared server-side key whose budget is drained (the P0 key-leak
+//     scenario live). The anonymous POST lane is the durable one.
+//   - The old gen.pollinations.ai + dummy-Bearer ("pollinations-free-workaround")
+//     approach is DEAD: the dummy bearer was only ever a TEST CASE, and gen's
+//     OpenAI-compatible endpoint 401s ("A valid API key is required") without a
+//     real key. Do not resurrect it.
+//   - If POLLINATIONS_API_KEY is set (free at https://enter.pollinations.ai/keys),
+//     the provider upgrades to gen.pollinations.ai/v1 (keyed: higher limits,
+//     full catalog) and injects the real Bearer.
+//
+// SECURITY (pollinations-deep-audit-2026-06-27):
+//
+//	P0 — the API key travels ONLY in the Authorization: Bearer header, NEVER as
+//	a URL query param. Their own code comments warn query keys leak into access
+//	logs, referrers and browser history. POST + Bearer keeps the key server-side.
+//	P2 — no key-prefix console logging either; this provider never logs key
+//	material (presence bit only).
+//
+// Caveat: the keyless text route draws from a SHARED anonymous pollen budget.
+// When the budget is exhausted the API still returns HTTP 200 but the content
+// is a "not enough credits / top up" notice. The provider detects that,
+// refuses to cache it, and sets X-FreeProxy-Budget-Exhausted: 1 so callers
+// know to retry later instead of mistaking it for a completion.
 type PollinationsProvider struct {
-	base      string
-	textBase  string
-	apiKey    string
-	proxy     *httputil.ReverseProxy
-	textProxy *httputil.ReverseProxy
-	models    []string
-	modelSet  map[string]struct{}
-	limiter   RateLimiter
-	cache     Cache
+	base     string
+	apiKey   string
+	keyed    bool
+	proxy    *httputil.ReverseProxy
+	models   []string
+	modelSet map[string]struct{}
+	cache    Cache
+	// sem serializes keyless upstream calls: the anonymous lane allows exactly
+	// 1 concurrent request per IP. Keyed mode does not take the semaphore.
+	sem chan struct{}
 }
 
-func NewPollinationsProvider(limiter RateLimiter, cache Cache) *PollinationsProvider {
-	base := "https://gen.pollinations.ai"
-	textBase := "https://text.pollinations.ai"
-	// Prefer env key if set (real pollen key from https://enter.pollinations.ai/keys)
+// keylessModels is the complete anonymous catalog: exactly one model.
+// Anything else 404s upstream, so advertising more would only misroute.
+var keylessModels = []string{"openai"}
+
+var keyedModels = []string{
+	"openai", "gemma-4-31b", "gpt-oss", "qwen3.8-27b", "muse-glimmer", "muse-spark-1.2",
+	"nemotron-3.5-lightning", "glm-5.3", "kimi-k3", "grok-4.6", "deepseek/deepseek-v4-flash-vision-exp",
+}
+
+// NewPollinationsProvider builds the provider; key comes from
+// POLLINATIONS_API_KEY (fallback POLLINATIONS_KEY). Empty key = free route.
+func NewPollinationsProvider(cache Cache) *PollinationsProvider {
 	apiKey := os.Getenv("POLLINATIONS_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("POLLINATIONS_KEY")
 	}
-	// Workaround: any Bearer bypasses anonymous gate; use stable dummy that Pollinations accepts.
-	// We ignore anonymous distinction entirely — always inject something.
-	if apiKey == "" {
-		apiKey = "pollinations-free-workaround"
+	// Free path first: keyless text route. Keyed users get gen.
+	base := "https://text.pollinations.ai/openai"
+	models := keylessModels
+	keyed := false
+	if apiKey != "" {
+		base = "https://gen.pollinations.ai"
+		models = keyedModels
+		keyed = true
 	}
-	// ponytail: dummy bearer for free backends; use real key via POLLINATIONS_API_KEY if rate-limit matters
 	baseURL, _ := url.Parse(base)
-	textURL, _ := url.Parse(textBase)
-
 	transport := &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:   true,
@@ -52,32 +100,37 @@ func NewPollinationsProvider(limiter RateLimiter, cache Cache) *PollinationsProv
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
 	}
-
 	p := &PollinationsProvider{
 		base:     base,
-		textBase: textBase,
 		apiKey:   apiKey,
-		models: []string{
-			"openai", "gemma-4-31b", "gpt-oss", "qwen3.8-27b", "muse-glimmer", "muse-spark-1.2",
-			"nemotron-3.5-lightning", "glm-5.3", "kimi-k3", "grok-4.6", "deepseek/deepseek-v4-flash-vision-exp",
-		},
-		modelSet: make(map[string]struct{}),
-		limiter:  limiter,
+		keyed:    keyed,
 		cache:    cache,
+		models:   models,
+		modelSet: make(map[string]struct{}),
+		sem:      make(chan struct{}, 1),
 	}
 	for _, m := range p.models {
 		p.modelSet[m] = struct{}{}
 	}
-
 	p.proxy = &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(baseURL)
 			r.Out.Host = r.Out.URL.Host
-			// Inject workaround auth — ignore anonymous gate
-			r.Out.Header.Set("Authorization", "Bearer "+p.apiKey)
-			r.Out.Header.Set("x-api-key", p.apiKey)
-			// Preserve content-type, strip client auth leakage
+			// Keyed mode only: real Bearer. Keyless mode sends NO auth —
+			// the dummy-bearer test hack is gone and stays gone.
+			// SECURITY P0 (pollinations-deep-audit-2026-06-27): the API key
+			// travels ONLY in the Authorization: Bearer header — NEVER as a
+			// URL query param. Query-param keys leak into browser history,
+			// proxy logs, and (on GET image paths) into every visitor page,
+			// letting anyone scrape and burn the shared budget. POST + Bearer
+			// keeps the key server-side. No key-prefix console logging either
+			// (their P2) — this provider never logs key material.
+			if p.keyed {
+				r.Out.Header.Set("Authorization", "Bearer "+p.apiKey)
+			} else {
+				r.Out.Header.Del("Authorization")
+			}
 			r.Out.Header.Set("Content-Type", "application/json")
 		},
 		ModifyResponse: func(resp *http.Response) error {
@@ -87,17 +140,6 @@ func NewPollinationsProvider(limiter RateLimiter, cache Cache) *PollinationsProv
 			return nil
 		},
 	}
-
-	p.textProxy = &httputil.ReverseProxy{
-		Transport: transport,
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(textURL)
-			r.Out.Host = r.Out.URL.Host
-			r.Out.Header.Set("Authorization", "Bearer "+p.apiKey)
-			r.Out.Header.Set("x-api-key", p.apiKey)
-		},
-	}
-
 	return p
 }
 
@@ -109,8 +151,8 @@ func (p *PollinationsProvider) Handles(model string) bool {
 	return ok
 }
 func (p *PollinationsProvider) Health(ctx context.Context) error {
-	req, _ := http.NewRequestWithContext(ctx, "GET", p.base+"/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	// gen's /text/models is the no-auth models list (HTTP 200, verified).
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://gen.pollinations.ai/text/models", nil)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -123,18 +165,38 @@ func (p *PollinationsProvider) Health(ctx context.Context) error {
 	return nil
 }
 
-func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) error {
-	// Rate-limit gate (Pollinations ~1 req/15s anon) — if limiter says no, we still proxy but add header
-	if p.limiter != nil && !p.limiter.Allow(p.ID()) {
-		w.Header().Set("X-FreeProxy-RateLimited", "1")
-		w.Header().Set("Retry-After", "15")
-	}
+// budgetExhausted sniffs a 200 response for the shared-budget-exhausted notice.
+func budgetExhausted(body []byte) bool {
+	s := string(body)
+	return strings.Contains(s, "doesn't have enough credits") ||
+		strings.Contains(s, "not enough credits") ||
+		strings.Contains(s, "enter.pollinations.ai/top-up")
+}
 
-	// Try cache for non-streaming POSTs (CF gateway style)
+// serveUpstream proxies one request upstream. In keyless mode the anonymous
+// lane is serialized: 1 concurrent request per IP ("Queue full for IP").
+// Returns false if the concurrency slot stayed busy past the wait ceiling.
+func (p *PollinationsProvider) serveUpstream(w http.ResponseWriter, r *http.Request) bool {
+	if !p.keyed {
+		select {
+		case p.sem <- struct{}{}:
+			defer func() { <-p.sem }()
+		case <-time.After(30 * time.Second):
+			http.Error(w, "pollinations: anonymous lane busy (1 concurrent/IP); retry shortly", http.StatusTooManyRequests)
+			return false
+		}
+	}
+	p.proxy.ServeHTTP(w, r)
+	return true
+}
+
+func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) error {
+	// No artificial pacing: the real anonymous-lane constraint is 1 concurrent
+	// request per IP, enforced by the semaphore in serveUpstream (event-driven,
+	// not a timer). The old 1-req/15s guess is gone.
 	if p.cache != nil && r.Method == "POST" && r.URL.Path == "/v1/chat/completions" {
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		// Simple cache key: model + body hash (naive, ponytail)
 		key := p.ID() + ":" + string(bodyBytes[:min(200, len(bodyBytes))])
 		if cached, ok := p.cache.Get(key); ok {
 			w.Header().Set("X-Cache", "HIT")
@@ -143,49 +205,38 @@ func (p *PollinationsProvider) Proxy(w http.ResponseWriter, r *http.Request) err
 			w.Write(cached)
 			return nil
 		}
-		// On miss, capture response for caching (only 200s)
-		// Use buffering recorder: the 401/429 status must NOT be committed to w
-		// before we decide whether to fall back to text.pollinations.ai.
 		rec := newBufferingRecorder()
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		// Clone request for text fallback if needed
-		origBody := make([]byte, len(bodyBytes))
-		copy(origBody, bodyBytes)
-
-		p.proxy.ServeHTTP(rec, r)
-		if rec.status == 401 || rec.status == 429 {
-			// Fallback to text.pollinations.ai which still serves anonymous
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/openai" // text endpoint style
-			r2.Body = io.NopCloser(bytes.NewReader(origBody))
-			p.textProxy.ServeHTTP(w, r2)
+		if !p.serveUpstream(rec, r) {
+			rec.replay(w) // 429 from the concurrency gate
 			return nil
 		}
-		if rec.status == 200 && p.cache != nil {
-			// Cache 60s for repeated prompts (CF edge style)
+		if budgetExhausted(rec.body.Bytes()) {
+			// Honest signal: shared budget empty right now — retry later.
+			for k, vv := range rec.header {
+				for _, v := range vv {
+					w.Header().Add(k, v)
+				}
+			}
+			w.Header().Set("X-FreeProxy-Budget-Exhausted", "1")
+			w.WriteHeader(rec.status)
+			w.Write(rec.body.Bytes())
+			return nil
+		}
+		if rec.status == 200 {
 			p.cache.Set(key, rec.body.Bytes(), 60*time.Second)
 		}
 		rec.replay(w)
 		return nil
 	}
-
-	// Non-cache path or streaming — direct proxy with fallback.
-	// Use streaming-aware recorder: streams through on 200, suppresses 401/429
-	// so the fallback can write a clean response.
-	rec := newStreamingFallbackRecorder(w)
-	p.proxy.ServeHTTP(rec, r)
-	if rec.fallbackNeeded() {
-		// Fallback to text endpoint on auth/rate errors
-		r2 := r.Clone(r.Context())
-		p.textProxy.ServeHTTP(w, r2)
-	}
+	// Streaming / other paths: direct passthrough (serialized for keyless).
+	p.serveUpstream(w, r)
 	return nil
 }
 
 // bufferingRecorder captures the full response (status, headers, body) without
-// writing to the underlying ResponseWriter. Call replay(w) to flush it after
-// deciding whether a fallback is needed. Used for the cache path where we
-// need the body for caching anyway.
+// writing to the underlying ResponseWriter, so the caller can inspect the
+// body (budget sniffing, caching) before committing. Call replay(w) to flush.
 type bufferingRecorder struct {
 	header http.Header
 	body   *bytes.Buffer
@@ -219,66 +270,7 @@ func (b *bufferingRecorder) replay(w http.ResponseWriter) {
 	w.Write(b.body.Bytes())
 }
 
-// streamingFallbackRecorder streams the response through on success (200),
-// but suppresses the status/headers/body on 401/429 so the caller can run
-// the text.pollinations.ai fallback with a clean ResponseWriter.
-type streamingFallbackRecorder struct {
-	w           http.ResponseWriter
-	header      http.Header
-	status      int
-	wroteHeader bool
-	suppress    bool
-}
-
-func newStreamingFallbackRecorder(w http.ResponseWriter) *streamingFallbackRecorder {
-	return &streamingFallbackRecorder{
-		w:      w,
-		header: make(http.Header),
-		status: 200,
-	}
-}
-
-func (s *streamingFallbackRecorder) Header() http.Header { return s.header }
-
-func (s *streamingFallbackRecorder) WriteHeader(code int) {
-	s.status = code
-	if code == 401 || code == 429 {
-		// Suppress: do not commit to w, caller will run fallback.
-		s.suppress = true
-		return
-	}
-	for k, vv := range s.header {
-		for _, v := range vv {
-			s.w.Header().Add(k, v)
-		}
-	}
-	s.w.WriteHeader(code)
-	s.wroteHeader = true
-}
-
-func (s *streamingFallbackRecorder) Write(b []byte) (int, error) {
-	if s.suppress {
-		// Discard the error body; fallback will write the real response.
-		return len(b), nil
-	}
-	if !s.wroteHeader {
-		s.WriteHeader(200)
-	}
-	return s.w.Write(b)
-}
-
-// fallbackNeeded reports whether the upstream returned 401/429 and the
-// response was suppressed for fallback.
-func (s *streamingFallbackRecorder) fallbackNeeded() bool { return s.suppress }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// Pollinations direct fallback helper for JSON body rewriting (model alias)
+// rewriteModel rewrites a model alias inside a JSON body.
 func rewriteModel(body []byte, from, to string) []byte {
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {

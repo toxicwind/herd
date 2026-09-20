@@ -24,7 +24,7 @@ type Provider interface {
 	Health(ctx context.Context) error
 }
 
-// RateLimiter controls per-provider request pacing (e.g., Pollinations 1 req/15s anon)
+// RateLimiter controls per-provider request pacing for providers with real rate limits.
 type RateLimiter interface {
 	Allow(provider string) bool
 	Wait(provider string) time.Duration
