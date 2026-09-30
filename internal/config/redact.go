@@ -195,6 +195,13 @@ func redactWhole(v any) any {
 }
 
 func redactString(key, s string) string {
+	// A tailcat:// proxy URL carries the connection token in its authority,
+	// which is the private listener's only credential. validatePeerTailcat
+	// accepts the scheme case-insensitively, so match the scheme the same way
+	// or an upper-case spelling would slip past this check.
+	if strings.EqualFold(key, "proxy") && strings.HasPrefix(strings.ToLower(s), "tailcat://") {
+		return "tailcat://" + RedactedPlaceholder
+	}
 	switch strings.ToLower(key) {
 	case "cmd", "cmdstop":
 		for _, re := range cmdSecretPatterns {

@@ -219,6 +219,13 @@ type Config struct {
 	// Flock delegates cloud-model serving to Flock (:8000), the unified
 	// multi-provider remote-API/completions subsystem. Replaces astMatrix.
 	Flock *FlockConfig `yaml:"flock"`
+
+	// Tailcat configures the private Tailcat listener and its HTTP policy.
+	// Ported from the ranch stockyard/herd lineage 2026-09-30; server wiring
+	// (the -listen-tailcat flag) is a separate future layer.
+	Tailcat *TailcatConfig `yaml:"tailcat" json:"tailcat"`
+
+	tailcatEnabled bool
 	// routing is the canonical source for swap/scheduling configuration.
 	// New code must read Routing, never the backwards-compat fields below.
 	Routing RoutingConfig `yaml:"routing"`
@@ -288,6 +295,14 @@ func (c *Config) RealModelName(search string) (string, bool) {
 	} else {
 		return "", false
 	}
+}
+
+func (c *Config) TailcatEnabled() bool {
+	return c.tailcatEnabled
+}
+
+func (c *Config) SetTailcatEnabled(enabled bool) {
+	c.tailcatEnabled = enabled
 }
 
 func (c *Config) FindConfig(modelName string) (ModelConfig, string, bool) {

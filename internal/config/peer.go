@@ -4,22 +4,41 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
+
+	"github.com/mostlygeek/llama-swap/internal/tailcat"
 )
 
 type PeerDictionaryConfig map[string]PeerConfig
 type PeerConfig struct {
-	Proxy    string   `yaml:"proxy"`
-	ProxyURL *url.URL `yaml:"-"`
+	Proxy      string   `yaml:"proxy"`
+	ProxyURL   *url.URL `yaml:"-"`
 	// ApiKey injected as Authorization: Bearer <key>. Empty means free-workaround mode
 	// (Pollinations now requires any Bearer to avoid 401 "not anonymous" gate).
 	// Router will inject dummy "pollinations-free-workaround" when empty.
-	ApiKey  string   `yaml:"apiKey"`
-	Models  []string `yaml:"models"`
-	Filters Filters  `yaml:"filters"`
+	ApiKey     string   `yaml:"apiKey"`
+	TailcatKey string   `yaml:"tailcatKey"`
+	Models     []string `yaml:"models"`
+	Filters    Filters  `yaml:"filters"`
 
 	// Timeout settings for proxy connections
 	Timeouts TimeoutsConfig `yaml:"timeouts"`
+
+	tailcatBlob       string
+	tailcatPrivateKey *tailcat.PrivateKey
 }
+
+// Tailcat returns the Tailcat-specific peer settings derived while validating
+// a tailcat:// proxy. PrivateKey is parsed key material, retained so callers do
+// not need to read the key file again. found is false for non-Tailcat peers.
+func (c PeerConfig) Tailcat() (key, blob string, privateKey *tailcat.PrivateKey, found bool) {
+	if c.tailcatBlob == "" {
+		return "", "", nil, false
+	}
+	return c.TailcatKey, c.tailcatBlob, c.tailcatPrivateKey, true
+}
+
+type rawPeerConfig PeerConfig
 
 // PeerModelFQN returns the fully qualified routing name for a peer model.
 // Peer and model IDs may both contain slashes, so callers must treat the
@@ -139,19 +158,30 @@ func ValidatePeerNamespace(c Config) error {
 }
 
 func (c *PeerConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	type rawPeerConfig PeerConfig
+	// The proxy scheme decides the response-header default, so read the raw
+	// proxy before the real unmarshal fills in the rest of the defaults.
+	var probe rawPeerConfig
+	if err := unmarshal(&probe); err != nil {
+		return err
+	}
+	responseHeaderDefault := 60
+	if u, err := url.Parse(probe.Proxy); err == nil && strings.EqualFold(u.Scheme, "tailcat") {
+		// Tailcat peers can spend minutes loading a remote model before
+		// sending response headers. Keep an explicit timeout bounded.
+		responseHeaderDefault = 300
+	}
 	defaults := rawPeerConfig{
 		Proxy:   "",
 		ApiKey:  "",
 		Models:  []string{},
 		Filters: Filters{},
 
-		// mostly matches http.DefaultTransport but with a 60s ResponseHeader timeout
-		// to match the pre PR #619 functionality
+		// Mostly matches http.DefaultTransport. HTTP peers retain the 60s
+		// response-header timeout from before PR #619.
 		Timeouts: TimeoutsConfig{
 			Connect:        30,
 			KeepAlive:      30,
-			ResponseHeader: 60,
+			ResponseHeader: responseHeaderDefault,
 			TLSHandshake:   10,
 			ExpectContinue: 1,
 			IdleConn:       90,
@@ -166,13 +196,15 @@ func (c *PeerConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if defaults.Proxy == "" {
 		return fmt.Errorf("proxy is required")
 	}
-
 	// Validate proxy is a valid URL and store the parsed value
 	parsedURL, err := url.Parse(defaults.Proxy)
 	if err != nil {
 		return fmt.Errorf("invalid peer proxy URL (%s): %w", defaults.Proxy, err)
 	}
 	defaults.ProxyURL = parsedURL
+	if err := validatePeerTailcat(&defaults); err != nil {
+		return err
+	}
 
 	// Validate models is not empty
 	if len(defaults.Models) == 0 {
