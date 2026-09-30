@@ -123,11 +123,18 @@ type HistogramData struct {
 type Store struct {
 	db       *sql.DB
 	inMemory bool
+	cache    *cacheRepository
 }
 
 // IsInMemory returns true if the store is using an in-memory database.
 func (s *Store) IsInMemory() bool {
 	return s.inMemory
+}
+
+// Cache returns the store's general-purpose key/value cache. Capability
+// auto-discovery persists its probes here so they survive restarts.
+func (s *Store) Cache() CacheRepository {
+	return s.cache
 }
 
 // New opens a SQLite store at path. An empty path creates an in-memory store.
@@ -164,7 +171,14 @@ func New(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, inMemory: !diskFile}, nil
+	s := &Store{db: db, inMemory: !diskFile, cache: &cacheRepository{db: db}}
+	// Drop cache rows that expired while the process was not running, so a
+	// long-lived database does not accumulate them.
+	if err := s.cache.Prune(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {

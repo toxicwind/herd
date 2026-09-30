@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mostlygeek/llama-swap/internal/capcompat"
 	"github.com/mostlygeek/llama-swap/internal/chain"
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/docagent"
@@ -48,6 +49,19 @@ type Server struct {
 	// across the Server instances a hot config reload creates. A nil value
 	// disables the endpoint; Docs methods are nil-receiver safe.
 	reference *docagent.Docs
+
+	// capcompat holds model capabilities discovered from upstream servers.
+	// It is refreshed when a model becomes ready and read by /v1/models, so
+	// an unloaded model still advertises what it can do. Discovery is
+	// in-process only: this fork's store exposes no CacheRepository
+	// implementation, so the service runs with a nil cache (documented in
+	// capcompat.New: persistence disabled, process-lifetime discovery).
+	capcompat *capcompat.Service
+
+	// capcompatCancel unsubscribes the process-state listener that drives
+	// discovery. The event dispatcher is process-wide, so a hot config reload
+	// would otherwise leave the retired Server probing alongside the new one.
+	capcompatCancel context.CancelFunc
 
 	// tools is the MCP tool surface served at /api/mcp. Providers are
 	// aggregated here rather than enumerated in the handler, so a future
@@ -261,6 +275,12 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 	}
 	s.tools = tools
 
+	// Capability auto-discovery: when a model becomes ready, probe the
+	// upstream it fronts and cache what it reports. The probe runs on its own
+	// goroutine so a slow upstream never blocks the process state machine.
+	s.capcompat = capcompat.New(s.store.Cache(), proxylog)
+	s.capcompatCancel = event.On(s.onProcessStateChange)
+
 	s.routes()
 	s.startPreload()
 	// Continuously reconcile model load/unload state and broadcast transitions
@@ -447,7 +467,7 @@ func (s *Server) routes() {
 	mux.Handle("/api/mcp", apiChain.ThenFunc(s.handleAPIMCP))
 
 	s.mux = mux
-	s.handler = chain.New(CreateRequestLogMiddleware(s.proxylog), CreateCORSMiddleware()).Then(mux)
+	s.handler = chain.New(CreateRequestLogMiddleware(s.proxylog), CreateCORSMiddleware(s.cfg)).Then(mux)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -473,6 +493,9 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		return nil
 	}
 	s.shutdownFn()
+	if s.capcompatCancel != nil {
+		s.capcompatCancel()
+	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex

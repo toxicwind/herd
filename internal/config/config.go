@@ -209,6 +209,9 @@ type Config struct {
 	RequiredAPIKeys      []string             `yaml:"apiKeys"`
 	Peers                PeerDictionaryConfig `yaml:"peers"`
 	Upstream             UpstreamConfig       `yaml:"upstream"`
+
+	// security groups CORS and related hardening settings, see issue #1133
+	Security SecurityConfig `yaml:"security"`
 	// AstMatrix configures the AST Matrix cloud router.
 	// When enabled, cloud model requests are routed through the matrix
 	// to remote providers (openrouter, nvidia, groq, google, etc.).
