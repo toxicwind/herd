@@ -102,7 +102,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	}
 
 	if err := config.Security.CORS.Validate(); err != nil {
-		return Config{}, fmt.Errorf("security.cors: %w", err)
+		return Config{}, &corsValidationError{err: fmt.Errorf("security.cors: %w", err)}
 	}
 
 	switch config.LogToStdout {

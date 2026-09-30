@@ -73,6 +73,27 @@ func configStorePath(cfg config.Config) string {
 	return strings.TrimSpace(cfg.Store.Path)
 }
 
+// isCorruptStoreErr reports whether err looks like SQLite database corruption
+// rather than a permissions, disk, or transient problem. Only corruption
+// triggers the quarantine-and-rebuild fallback; anything else still fails
+// closed so real problems stay loud.
+func isCorruptStoreErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, sig := range []string{
+		"file is not a database",
+		"database disk image is malformed",
+		"not a database",
+	} {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
+
 // runValidate loads the configuration from the given sources and prints a
 // short human-readable result to out. It returns 0 when the config loads
 // without error and 1 otherwise. It does not start the server, detect
@@ -201,6 +222,25 @@ func main() {
 
 	initialStorePath := configStorePath(cfg)
 	initialStore, err := store.New(initialStorePath)
+	if err != nil && isCorruptStoreErr(err) && initialStorePath != "" {
+		// A corrupted SQLite file must not take the server down: quarantine
+		// it and start fresh. Capability discovery rebuilds from live probes
+		// as models become ready; everything else in the store is a cache.
+		// A fallback is not a rollback: the server moves forward on a clean
+		// store instead of refusing to start.
+		quarantine := initialStorePath + ".corrupt-" + time.Now().Format("20060102-150405")
+		slog.Error("sqlite store unreadable, quarantining and rebuilding", "error", err, "quarantine", quarantine)
+		if renameErr := os.Rename(initialStorePath, quarantine); renameErr != nil {
+			slog.Error("failed to quarantine corrupt store", "error", renameErr)
+			os.Exit(1)
+		} else {
+			// WAL/SHM sidecars belong to the quarantined file, not the fresh one.
+			for _, suffix := range []string{"-wal", "-shm"} {
+				_ = os.Rename(initialStorePath+suffix, quarantine+suffix)
+			}
+			initialStore, err = store.New(initialStorePath)
+		}
+	}
 	if err != nil {
 		slog.Error("failed to create store", "error", err)
 		os.Exit(1)

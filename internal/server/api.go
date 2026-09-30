@@ -24,6 +24,7 @@ type modelRecord struct {
 	Description         string         `json:"description,omitempty"`
 	Architecture        map[string]any `json:"architecture,omitempty"`
 	Capabilities        map[string]any `json:"capabilities,omitempty"`
+	CapabilitySources   map[string]string `json:"capabilitySources,omitempty"`
 	SupportedParameters []string       `json:"supported_parameters,omitempty"`
 	ContextLength       int            `json:"context_length,omitempty"`
 	ContextWindow       int            `json:"context_window,omitempty"`
@@ -106,6 +107,48 @@ func renderCapabilities(caps config.ModelCapConfig) (arch map[string]any, capsMa
 	return
 }
 
+// capabilityProvenance reports, for each rendered capability badge key, where
+// the value came from: "configured" when the config alone suffices to produce
+// the badge, "discovered" when the probe contributed anything.
+//
+// Merge fills config zero-values from discovery field by field, so a badge is
+// "configured" only if every modality and flag it needs is set in the config.
+// Anything else means discovery supplied at least part of it, which is what
+// the UI's badge tooltips report.
+func capabilityProvenance(cfg, auto config.ModelCapConfig) map[string]string {
+	sources := make(map[string]string)
+	merged := cfg.Merge(auto)
+	if merged.Empty() {
+		return sources
+	}
+	in, out := merged.In, merged.Out
+	inConfigured := func(m string) bool { return contains(cfg.In, m) }
+	outConfigured := func(m string) bool { return contains(cfg.Out, m) }
+	badge := func(key string, present, configured bool) {
+		if !present {
+			return
+		}
+		if configured {
+			sources[key] = "configured"
+		} else {
+			sources[key] = "discovered"
+		}
+	}
+	badge("vision", contains(in, "image"), inConfigured("image"))
+	badge("audio_transcriptions", contains(in, "audio") && contains(out, "text"),
+		inConfigured("audio") && outConfigured("text"))
+	badge("audio_speech", contains(in, "text") && contains(out, "audio"),
+		inConfigured("text") && outConfigured("audio"))
+	badge("image_generation", contains(in, "text") && contains(out, "image"),
+		inConfigured("text") && outConfigured("image"))
+	badge("image_to_image", contains(in, "image") && contains(out, "image"),
+		inConfigured("image") && outConfigured("image"))
+	badge("function_calling", merged.Tools, cfg.Tools)
+	badge("reranker", merged.Reranker, cfg.Reranker)
+	badge("context", merged.Context > 0, cfg.Context > 0)
+	return sources
+}
+
 // contains reports whether s is present in ss.
 func contains(ss []string, s string) bool {
 	for _, v := range ss {
@@ -152,6 +195,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		id, name, description string,
 		metadata map[string]any,
 		caps config.ModelCapConfig,
+		capSources map[string]string,
 		status string,
 		internalMetadata map[string]any,
 	) modelRecord {
@@ -165,6 +209,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Status:      map[string]any{"value": status},
 		}
 		rec.Architecture, rec.Capabilities, rec.SupportedParameters, rec.ContextLength = renderCapabilities(caps)
+		rec.CapabilitySources = capSources
 		// context_window mirrors context_length for OpenAI-compatible gateways
 		// (e.g. Bifrost) that read the context size from this field name.
 		rec.ContextWindow = rec.ContextLength
@@ -206,8 +251,8 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 		// Resolved once and reused for the aliases, which describe the same
 		// upstream and must not disagree with the model they point at.
-		caps := s.resolveCapabilities(r.Context(), id, mc)
-		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, caps, status, internalMetadata))
+		caps, capSources := s.resolveCapabilitiesWithSources(r.Context(), id, mc)
+		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, caps, capSources, status, internalMetadata))
 
 		if s.cfg.IncludeAliasesInList {
 			for _, alias := range mc.Aliases {
@@ -218,6 +263,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 						mc.Description,
 						mc.Metadata,
 						caps,
+						capSources,
 						status,
 						map[string]any{"type": "alias", "modelID": id},
 					))
@@ -240,6 +286,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 				"",
 				nil,
 				config.ModelCapConfig{},
+				nil,
 				"unloaded",
 				map[string]any{"type": "peer", "peerID": peerID},
 			))
@@ -255,14 +302,14 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			modelIDs[alias] = struct{}{}
-			data = append(data, newRecord(alias, "flock (alias): "+alias, "", map[string]any{"flock": true, "alias": true}, config.ModelCapConfig{}, "cloud", nil))
+			data = append(data, newRecord(alias, "flock (alias): "+alias, "", map[string]any{"flock": true, "alias": true}, config.ModelCapConfig{}, nil, "cloud", nil))
 		}
 		for _, modelID := range s.cloud.ModelIDs() {
 			if _, dup := modelIDs[modelID]; dup {
 				continue
 			}
 			modelIDs[modelID] = struct{}{}
-			data = append(data, newRecord(modelID, "flock: "+modelID, "", map[string]any{"flock": true, "cloud": true}, config.ModelCapConfig{}, "cloud", nil))
+			data = append(data, newRecord(modelID, "flock: "+modelID, "", map[string]any{"flock": true, "cloud": true}, config.ModelCapConfig{}, nil, "cloud", nil))
 		}
 	}
 
@@ -298,6 +345,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			selector.Description,
 			selector.Metadata,
 			config.ModelCapConfig{},
+			nil,
 			status,
 			internalMetadata,
 		))
@@ -317,6 +365,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 				"",
 				nil,
 				config.ModelCapConfig{},
+				nil,
 				"unloaded",
 				map[string]any{"type": "profile"},
 			))

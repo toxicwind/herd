@@ -27,6 +27,7 @@ type apiModel struct {
 	PeerID        string         `json:"peerID"`
 	Aliases       []string       `json:"aliases,omitempty"`
 	Capabilities  map[string]any `json:"capabilities,omitempty"`
+	CapabilitySources map[string]string `json:"capabilitySources,omitempty"`
 	ContextLength int            `json:"context_length,omitempty"`
 }
 
@@ -115,17 +116,21 @@ func (s *Server) modelStatus() []apiModel {
 		// Same resolution /v1/models uses, so the dashboard and the OpenAI
 		// listing never disagree about what a model can do. Bound by
 		// shutdownCtx rather than a request: modelStatus is also called from
-		// event callbacks that have no request of their own.
-		_, capsMap, _, ctxLen := renderCapabilities(s.resolveCapabilities(s.shutdownCtx, id, mc))
+		// event callbacks that have no request of their own. Provenance rides
+		// along so the UI can badge each capability's source without a
+		// second round-trip.
+		mergedCaps, capSources := s.resolveCapabilitiesWithSources(s.shutdownCtx, id, mc)
+		_, capsMap, _, ctxLen := renderCapabilities(mergedCaps)
 		models = append(models, apiModel{
-			Id:            id,
-			Name:          mc.Name,
-			Description:   mc.Description,
-			State:         state,
-			Unlisted:      mc.Unlisted,
-			Aliases:       mc.Aliases,
-			Capabilities:  capsMap,
-			ContextLength: ctxLen,
+			Id:                id,
+			Name:              mc.Name,
+			Description:       mc.Description,
+			State:             state,
+			Unlisted:          mc.Unlisted,
+			Aliases:           mc.Aliases,
+			Capabilities:      capsMap,
+			CapabilitySources: capSources,
+			ContextLength:     ctxLen,
 		})
 	}
 

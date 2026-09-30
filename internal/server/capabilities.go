@@ -67,6 +67,21 @@ func (s *Server) refreshCapabilities(modelID string, mc config.ModelConfig) {
 	}
 }
 
+// resolveCapabilitiesWithSources returns the merged capabilities plus
+// per-badge provenance ("configured" vs "discovered"). The provenance is
+// derived from the same config-vs-discovery inputs Merge uses, so it never
+// needs a schema migration or a stored tag: the config is the source of
+// truth for what was hand-set.
+func (s *Server) resolveCapabilitiesWithSources(ctx context.Context, modelID string, mc config.ModelConfig) (config.ModelCapConfig, map[string]string) {
+	merged := s.resolveCapabilities(ctx, modelID, mc)
+	cfg := mc.Capabilities
+	var auto config.ModelCapConfig
+	if !cfg.DisableAuto {
+		auto, _ = s.capcompat.Lookup(ctx, capcompat.LocalKey(modelID, mc))
+	}
+	return merged, capabilityProvenance(cfg, auto)
+}
+
 // resolveCapabilities returns the capabilities to advertise for a local model:
 // what the config sets, with anything it leaves unset filled in from the last
 // successful probe.

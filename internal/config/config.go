@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 
@@ -326,7 +328,33 @@ func (c *Config) ResolveBaseModel(search string) (string, bool) {
 	return "", false
 }
 
+// LoadConfig loads the config at path.
+//
+// A CORS block that fails validation does not fail the load: the loader
+// falls back to the last-known-good CORS policy (persisted beside the config
+// on every successful load), or to the legacy permissive policy when no
+// backup exists, and logs the problem loudly. Every other load error still
+// fails closed. A fallback is not a rollback: the server starts on a policy
+// that worked instead of refusing to start at all.
 func LoadConfig(path string) (Config, error) {
+	cfg, err := loadConfigFile(path)
+	if err != nil {
+		var corsErr *corsValidationError
+		if !errors.As(err, &corsErr) {
+			return Config{}, err
+		}
+		return loadConfigWithCORSFallback(path, err)
+	}
+	// The CORS policy validated: remember it as the last known good so a
+	// future bad edit can fall back to it. Best-effort; a persistence
+	// failure is logged, never fatal.
+	if err := saveGoodCORS(path, cfg.Security.CORS); err != nil {
+		log.Printf("herd: warning: could not persist last-known-good CORS policy: %v", err)
+	}
+	return cfg, nil
+}
+
+func loadConfigFile(path string) (Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return Config{}, err
