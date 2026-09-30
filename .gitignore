@@ -25,18 +25,23 @@ cmd/bench-orchestrator/bench-orchestrator
 *.new
 
 
-<<<<<<< HEAD
 # token-scrub 2026-09-14: never commit secrets
 *.pat
 github_*_pat.json
 .env*
 *secret*
 *token*
-=======
+
 # Local llama-server engine builds (third-party sources + binaries, not committed)
 engines/
 __pycache__/
->>>>>>> origin/main
+
+# Vendored / generated artifacts (pruned 2026-09-30: ~800k lines of
+# ui-svelte/node_modules + mesh/data/models_discovered.json were committed
+# by accident via b7ac515e; regenerable, never commit)
+node_modules/
+ui-svelte/node_modules/
+mesh/data/models_discovered.json
 
 # --- secret hygiene (2026-09-19): never commit credentials ---
 .secrets*
