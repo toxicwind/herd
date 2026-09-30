@@ -1,63 +1,101 @@
-# herd
+<div align="right">
 
-> **herd** — run a whole herd of LLM backends behind one OpenAI-compatible API.
+[![herd on GitHub](https://img.shields.io/badge/github-toxicwind%2Fherd-181717?style=for-the-badge&logo=github)](https://github.com/toxicwind/herd)
+[![fork of mostlygeek/llama-swap](https://img.shields.io/badge/fork-mostlygeek%2Fllama--swap-2f81f7?style=for-the-badge&logo=git)](https://github.com/mostlygeek/llama-swap)
+[![go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?style=for-the-badge&logo=go)](https://github.com/toxicwind/herd/blob/main/go.mod)
 
-herd is a fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap) (upstream), extended with
-herd-specific infrastructure: AST Matrix V2 smart routing, an agentic lens suite, and hardening fixes for
-real-world deployments. The fork keeps upstream's core (swap models in and out of VRAM on demand,
-OpenAI-compatible endpoints) and layers herd's production tooling on top.
+</div>
 
-**Runs native — no container required.** The machine is the platform: we operate herd under
-mise + pitchfork, and plain `go build` works anywhere. Docker images exist only as a fallback
-for folks who can't or won't run the native stack — see
-[🐳 Docker (fallback — not recommended)](#-docker-fallback--not-recommended).
+# herd 🐂
 
-## Quickstart
+> **Run a whole herd of LLM backends behind one OpenAI-compatible API.**  
+> One port, one API, infinite models — herd swaps models in and out of VRAM on demand, routes requests with the AST Matrix V2 smart-routing layer, and serves everything over stable OpenAI-compatible endpoints. No containers required: the machine is the platform.
 
-```bash
-git clone https://github.com/toxicwind/herd.git
-cd herd
-make clean all        # or: go build -o herd .
+- 🦙 **Fork of [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap)** — upstream's battle-tested swap engine, hardened for real deployments
+- 🔀 **AST Matrix V2 routing** — token-bucket rate limiting, 5-strike circuit breaker, 8 routing strategies
+- ⚡ **Zero-downtime model swapping** — models load/unload from VRAM on demand behind a single proxy
+- 🔌 **OpenAI-compatible** — `/v1` endpoints plus `/ui`, `/health`, SSE streaming, and a synthesized `/models/sse` for Zed
+- 🖥️ **Runs native** — `go build`, no container ceremony; Docker exists only as a fallback export format
+
+**Security posture:** loopback-first by default (`127.0.0.1`), no external deps in the routing layer.  
+**License:** ⚠️ the repo ships **no `LICENSE` file** — `package.json` declares `MIT`. See [License](#license--security).
+
+## Why herd?
+
+One GPU, dozens of models, zero orchestration ceremony. llama.cpp backends each want their own port and their own VRAM reservation; herd gives them one door and a smart bouncer:
+
+- **Clients** see a single OpenAI-compatible API on `:25100` — Zed, aider, curl, any SDK.
+- **herd** decides which backend serves each request, keeps hot models resident, evicts cold ones, retries and reroutes around failures.
+- **Operators** get one config file, one health endpoint, and backends that restart cleanly even when a stale `llama-server` is squatting on a port.
+
+**Who it's for:** anyone running local LLM inference on their own box who wants llama-swap's simplicity with sovereign-grade routing, hardening, and multi-provider smarts.
+
+## Feature bullets
+
+- 🧠 **AST Matrix V2** (`internal/astmatrix/`, stdlib-only, zero external deps) — token-bucket rate limiting, 5-strike/30s-cooldown circuit breaker, 8 strategies: `hybrid`, `ast_race`, `sticky_affinity`, `weighted_elo`, `least_latency`, `round_robin`, `free`, `circuit_chain`
+- 🌐 **13 built-in providers** with base URLs (`internal/astmatrix/providers.go`) plus a built-in sovereign provider at `http://127.0.0.1:25100/v1`
+- 📡 **SSE that behaves** — `normalize_sse` keeps streaming stable across heterogeneous backends; `GET /models/sse` synthesized for Zed (`internal/server/models_sse.go`)
+- 🧹 **Self-healing process management** — pre-spawn `fuser -k` frees ports held by orphan `llama-server` processes (`internal/process/process_command.go`)
+- 🌐 **IPv4 loopback default** — `127.0.0.1`, so dual-stack `localhost` never breaks dial (`internal/config/model_config.go`)
+- 🔬 **Agentic lens suite** — stylometric authorship analysis, OSINT infra recon, crypto leak detection, tectonic drift lenses (`src/_11ty/lenses/*.js`, run by `.github/workflows/tectonic-drift.yml`)
+- 📊 **Bench orchestrator** — benchmark backends and strategies head-to-head (`internal/bench/orchestrator.go`)
+- 🗺️ **Mesh layout** — multi-node orchestration tooling under `mesh/` ([mesh README](mesh/README.md))
+
+## Diagram
+
+```mermaid
+graph LR
+    clients["OpenAI clients<br/>Zed · aider · curl · SDKs"]
+    proxy["herd :25100<br/>/v1 · /ui · /health"]
+    ast["AST Matrix V2<br/>routing · rate limits<br/>circuit breaker"]
+    slots["backend slots :25001–25099<br/>one llama-server per model"]
+    vram["VRAM<br/>swap on demand"]
+
+    clients --> proxy --> ast --> slots --> vram
 ```
 
-Create a config (see upstream docs for the full schema) and run:
+## Quick start
 
 ```bash
+git clone https://github.com/toxicwind/herd.git && cd herd
+make clean all          # or: go build -o herd .
 ./herd --config config.yaml --listen 127.0.0.1:8080
 ```
 
-## Why a fork
+Health check: `curl -sS http://127.0.0.1:25100/health` → `OK`
 
-Sovereign clients need things upstream doesn't provide:
+## Ports
 
-1. Stable **OpenAI-compatible streaming** even when backends differ → `normalize_sse`
-2. **Model discovery events** for Zed → `GET /models/sse` (`internal/server/models_sse.go`)
-3. Reliable restarts when an orphan `llama-server` holds a port → pre-spawn `fuser -k` (`internal/process/process_command.go`)
-4. **IPv4 loopback** defaults (`127.0.0.1`) so dual-stack `localhost` does not break dial (`internal/config/model_config.go`)
+| Env | Port | Surface |
+|---|---|---|
+| `LLAMA_SWAP_PORT` | **25100** | Proxy + `/ui` + `/v1` |
+| `LLAMA_START_PORT`–`LLAMA_END_PORT` | 25001–25099 | Backend slots owned by swap |
 
-## What's different from upstream
+## Architecture
 
-| Area | herd |
-|---|---|
-| Docker images | Fallback only (not recommended): `ghcr.io/toxicwind/herd:unified-<backend>` — see below |
-| Routing | AST Matrix V2: token-bucket rate limiting + 5-strike circuit breaker (30s cooldown), 8 routing strategies |
-| Providers | 13 built-in providers with base URLs (`internal/astmatrix/providers.go`) |
-| SSE | `GET /models/sse` synthesized for Zed; SSE normalization via `normalize_sse` |
-| Networking | IPv4 loopback default `127.0.0.1` (avoids localhost→::1 breakage) |
-| Process mgmt | Frees stale ports with `fuser -k` before spawning backends |
-| Sovereign | Built-in sovereign provider at `http://127.0.0.1:25100/v1` |
-| Lenses | Agentic lens suite (stylometric authorship, OSINT infra recon, crypto leak detection) |
-| Bench | Bench orchestrator in `internal/bench/orchestrator.go` |
+- **`llama-swap.go`** — entrypoint, upstream core (proxy + swap scheduler)
+- **`internal/server/`** — HTTP surface: proxy, `/ui`, `/health`, `/models/sse`
+- **`internal/astmatrix/`** — AST Matrix V2: `ratelimit.go`, `circuit.go`, strategy engine, `/astmatrix/status` + `/astmatrix/metrics` endpoints ([details](README_ASTMATRIX_V2.md))
+- **`internal/config/`** — YAML config loading, validation, schema (`config-schema.json`)
+- **`internal/process/`** — backend lifecycle: spawn, health, stale-port reclamation
+- **`internal/bench/`** — benchmark orchestrator
+- **`cmd/`** — helpers: `fake-model`, `simple-responder`, `vllm-wrapper`, `wol-proxy`, `monitor-test`, `test-concurrency`
+- **`mesh/`** — multi-node orchestration ([mesh/README.md](mesh/README.md))
+- **`ui-svelte/`** — web UI (bun + Svelte 5), `ui/` holds the upstream UI
+- **`docs/`** — configuration guide, models doc, grafana dashboards, examples (`docs/examples/`)
 
-### AST Matrix V2
+Fork-specific work lives on `main` here; upstream is tracked as the `upstream` remote (`mostlygeek/llama-swap`):
 
-Smart routing layer in `internal/astmatrix/` (stdlib-only, zero external dependencies). Full details in
-[README_ASTMATRIX_V2.md](README_ASTMATRIX_V2.md).
+```bash
+git remote -v
+# origin    https://github.com/toxicwind/herd.git (fetch)
+# origin    https://github.com/toxicwind/herd.git (push)
+# upstream  https://github.com/mostlygeek/llama-swap.git (fetch)
+```
 
-- **Rate limiting:** token bucket (`ratelimit.go`)
-- **Circuit breaker:** 5-strike, 30s cooldown (`circuit.go`)
-- **Strategies (8):** `hybrid`, `ast_race`, `sticky_affinity`, `weighted_elo`, `least_latency`, `round_robin`, `free`, `circuit_chain`
-- **Endpoints:** `/astmatrix/status`, `/astmatrix/metrics`
+## Config / optional services
+
+herd config is YAML — see `config.yaml` (working example), `config.example.yaml`, and the full `config-schema.json`. Upstream docs cover the base schema; herd adds the `astMatrix` block:
 
 ```yaml
 astMatrix:
@@ -68,72 +106,29 @@ astMatrix:
   enableCoalescing: true
 ```
 
-## Ports
+Optional services:
 
-| Env | Port | Surface |
-|---|---|---|
-| `LLAMA_SWAP_PORT` | **25100** | Proxy + `/ui` + `/v1` |
-| `LLAMA_START_PORT`–`LLAMA_END_PORT` | 25001–25099 | Backend slots owned by swap |
+- **Agentic lenses** — configure via `.env.example` (keys for the lens suite), run through `.github/workflows/tectonic-drift.yml`
+- **Grafana dashboards** — under `docs/grafana/`
+- **🐳 Docker (fallback — not recommended)** — [![Unified Docker](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml/badge.svg)](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml)
 
-Health: `curl -sS http://127.0.0.1:25100/health` → `OK`
+  > ⚠️ Docker works. It is also wrong for this stack: it fights your GPU (`--gpus`, `--runtime=nvidia` ceremony the native binary skips), turns 100GB of weights into a mount puzzle, inserts a shadow platform under your platform, and slows iteration (`go build` and run beats rebuild/push/pull/restart). It exists here as an **export format** for people who can't or won't run the native stack, and as CI's clean-room proof that herd assembles from nothing. If the machine is yours, go native.
+  >
+  > Images: `ghcr.io/toxicwind/herd:unified-<backend>` — built by `docker/unified/build-image.sh`, published by `.github/workflows/unified-docker.yml`.
+  >
+  > Rootless build note (2026-09-14): the rootless stage must use plain `docker build` (docker driver), **not** the buildx container driver — otherwise `FROM ghcr.io/toxicwind/herd:unified-<backend>` fails to resolve the local tag.
 
-## Agentic lens suite
-
-`src/_11ty/lenses/*.js` + `lib/lens-orchestrator.js`, run by `.github/workflows/tectonic-drift.yml`:
-
-- Stylometric authorship analysis
-- OSINT infrastructure reconnaissance
-- Cryptographic leak detection
-- Tectonic drift lenses
-
-Configure via `.env.example`.
-
-## Bench orchestrator
-
-`internal/bench/orchestrator.go` — benchmark orchestration for backends/strategies.
-
-## 🐳 Docker (fallback — not recommended)
-
-[![Unified Docker](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml/badge.svg)](https://github.com/toxicwind/herd/actions/workflows/unified-docker.yml)
-
-> ⚠️ **The sovereign take on Docker** 🐳🚫
->
-> Docker works. It is also wrong for this stack, and we would rather tell you why than
-> pretend otherwise:
->
-> - **It fights your GPU.** Every container needs `--gpus`, `--runtime=nvidia`, device flags —
->   ceremony the native binary skips entirely. The GPU is *right there*. Talk to it directly.
-> - **It turns 100GB of weights into a mount puzzle.** Your models live on disk. Docker makes you
->   re-expose them through volume mounts and then acts surprised when paths break.
-> - **It is a second platform under your platform.** We run on mise + pitchfork: the machine is the
->   platform. Docker inserts a shadow init system, an image registry, and a build pipeline for zero
->   local benefit.
-> - **It is slower to iterate.** Rebuild the image, push, pull, restart — versus `go build` and run.
->
-> So why does it exist here at all? As an **export format**: for people who cannot or will not run
-> the native stack, and as CI's clean-room proof that herd assembles from nothing. If the machine is
-> yours, go native. You will be happier.
-
-herd publishes its own images (not upstream's):
-
-```
-ghcr.io/toxicwind/herd:unified-<backend>
-```
-
-Built by `docker/unified/build-image.sh`, published by `.github/workflows/unified-docker.yml`.
-
-> **Rootless build note (2026-09-14):** the rootless build stage must use plain `docker build`
-> (docker driver), **not** the buildx container driver — otherwise
-> `FROM ghcr.io/toxicwind/herd:unified-<backend>` fails to resolve the local tag. Nightly unified
-> builds were failing for a week before this was fixed.
-
-## Remotes
+## Dev / contributing
 
 ```bash
-git remote -v
-# origin    https://github.com/toxicwind/herd.git (fetch)
-# origin    https://github.com/toxicwind/herd.git (push)
-# upstream  https://github.com/mostlygeek/llama-swap.git (fetch)
+make test          # go test ./...
+make test-all      # full suite incl. UI
+bun run build --root ui-svelte   # web UI
 ```
 
-herd tracks upstream `mostlygeek/llama-swap`; fork-specific work lives on `main` here.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution rules. Maintainers squash-merge into `main`; PRs must reference an issue and stay small and focused.
+
+## License + security
+
+- **License:** this repo currently ships **no `LICENSE` file**. `package.json` declares `"license": "MIT"`, but without a license file that declaration is not a license grant. Until a `LICENSE` is added, treat the code as all-rights-reserved.
+- **Security:** loopback-first defaults (`127.0.0.1`) — herd is built to serve the machine it's on, not the internet. The AST Matrix routing layer is stdlib-only Go (no external dependencies to audit). Backend slots are local processes; expose `:25100` beyond loopback only behind your own auth.
