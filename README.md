@@ -93,6 +93,28 @@ git remote -v
 # upstream  https://github.com/mostlygeek/llama-swap.git (fetch)
 ```
 
+## Lineage
+
+One coherent story, verified against git objects (2026-09-30):
+
+1. **[mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap)** — upstream's
+   battle-tested swap engine. Tracked as the `upstream` remote; upstream-sync
+   commits merged through 2026-08-29.
+2. **[toxicwind/sovereign-swap](https://github.com/toxicwind/sovereign-swap)** — the fork
+   era (born 2026-08-17, same root commit `b63b81b1`). Upstream tracking plus
+   estate hardening: toolchain-drift-guard CI, fork-aware GHCR tags, the
+   estate-shaped FQN regression test.
+3. **[toxicwind/herd](https://github.com/toxicwind/herd)** (this repo) — the canonical
+   monorepo. Absorbed sovereign-swap 2026-09-14 (`9ff75904`, wrapped by true
+   merge `18f8ac28`) and merged the ranch `stockyard/herd` lineage 2026-09-30
+   (tailcat adapter, kubeswap operator, go 1.27.1, k8s.io v0.37.1).
+   sovereign-swap remains untouched as a historical record.
+
+**Why the Go module path is still `github.com/mostlygeek/llama-swap`:** renaming it
+would break every import across the tree and every downstream consumer for zero
+runtime benefit. The path is a fossil of the lineage above — deliberately kept,
+documented here instead of "fixed".
+
 ## Config / optional services
 
 herd config is YAML — see `config.yaml` (working example), `config.example.yaml`, and the full `config-schema.json`. Upstream docs cover the base schema; herd adds the `astMatrix` block:
