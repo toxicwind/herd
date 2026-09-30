@@ -1,4 +1,5 @@
 import { playgroundSessionHeaders } from "./playgroundSession";
+import { api } from "./apiBase";
 
 export interface RerankResult {
   index: number;
@@ -18,7 +19,7 @@ export async function rerank(
   documents: string[],
   signal: AbortSignal
 ): Promise<RerankResponse> {
-  const response = await fetch("/v1/rerank", {
+  const response = await fetch(api("/v1/rerank"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...playgroundSessionHeaders },
     body: JSON.stringify({ model, query, documents }),

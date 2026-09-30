@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Model } from "../../lib/types";
-  import { capabilityLabels } from "../../lib/capabilities";
   import * as Card from "$lib/components/ui/card/index.js";
   import Tag from "../Tag.svelte";
 
@@ -9,6 +8,16 @@
   }
 
   let { model }: Props = $props();
+
+  const capabilityLabels: Record<string, string> = {
+    vision: "Vision",
+    audio_transcriptions: "Transcription",
+    audio_speech: "Speech",
+    image_generation: "Image Gen",
+    image_to_image: "Img→Img",
+    function_calling: "Function Calling",
+    reranker: "Reranker",
+  };
 
   let capabilities = $derived.by(() => {
     const caps = model?.capabilities ?? {};

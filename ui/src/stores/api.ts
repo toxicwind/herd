@@ -4,7 +4,6 @@ import type {
   ActivityPage,
   ActivityStatsData,
   VersionInfo,
-  LogData,
   APIEventEnvelope,
   ReqRespCapture,
   InFlightStats,
@@ -15,11 +14,10 @@ import type {
   ProfileState,
   PlaygroundModelType,
   HardwareSnapshot,
+  TailcatStatus,
 } from "../lib/types";
 import { appendActivityFilters, type ActivityFilters } from "../lib/activityFilters";
 import { connectionState } from "./theme";
-
-const LOG_LENGTH_LIMIT = 1024 * 100; /* 100KB of log data */
 
 // Stores
 export const models = writable<Model[]>([]);
@@ -38,8 +36,6 @@ export const selectorModels = derived(
 );
 
 export const hasListedModels = derived(playgroundModels, ($playgroundModels) => $playgroundModels.length > 0);
-export const proxyLogs = writable<string>("");
-export const upstreamLogs = writable<string>("");
 export const activityRevision = writable<number>(0);
 export const inFlightRequests = writable<number>(0);
 export const inflightRequestEntries = writable<InflightRequestEntry[]>([]);
@@ -48,6 +44,7 @@ const defaultUIConfig = (): UIConfig => ({
 });
 export const uiConfig = writable<UIConfig>(defaultUIConfig());
 export const performanceEnabled = writable<boolean>(false);
+export const tailcatStatus = writable<TailcatStatus>({ enabled: false, address: "", models: [] });
 export const versionInfo = writable<VersionInfo>({
   build_date: "unknown",
   commit: "unknown",
@@ -59,13 +56,6 @@ let profileRevision = 0;
 let playgroundModelsRequest = 0;
 let playgroundModelsFetch: Promise<Model[]> | null = null;
 let playgroundModelsRefreshQueued = false;
-
-function appendLog(newData: string, store: typeof proxyLogs | typeof upstreamLogs): void {
-  store.update((prev) => {
-    const updatedLog = prev + newData;
-    return updatedLog.length > LOG_LENGTH_LIMIT ? updatedLog.slice(-LOG_LENGTH_LIMIT) : updatedLog;
-  });
-}
 
 export function enableAPIEvents(enabled: boolean): void {
   if (!enabled) {
@@ -95,8 +85,6 @@ export function enableAPIEvents(enabled: boolean): void {
 
     apiEventSource.onopen = () => {
       // Clear everything on connect to keep things in sync
-      proxyLogs.set("");
-      upstreamLogs.set("");
       activityRevision.update((n) => n + 1);
       inFlightRequests.set(0);
       inflightRequestEntries.set([]);
@@ -111,6 +99,7 @@ export function enableAPIEvents(enabled: boolean): void {
       retryCount = 0;
       connectionState.set("connected");
       void fetchProfiles().catch((error) => console.error(error));
+      void fetchTailcatStatus().catch((error) => console.error(error));
     };
 
     apiEventSource.onmessage = (e: MessageEvent) => {
@@ -137,25 +126,15 @@ export function handleAPIEventMessage(data: string): void {
   const message = JSON.parse(data) as APIEventEnvelope;
   switch (message.type) {
     case "modelStatus": {
-      const newModels = JSON.parse(message.data) as Model[];
+      const receivedAt = Date.now();
+      const newModels = (JSON.parse(message.data) as Model[]).map((m) =>
+        m.uptimeMs !== undefined ? { ...m, readyAt: receivedAt - m.uptimeMs } : m,
+      );
       // Sort models by name and id
       newModels.sort((a, b) => {
         return (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true });
       });
       models.set(newModels);
-      break;
-    }
-
-    case "logData": {
-      const logData = JSON.parse(message.data) as LogData;
-      switch (logData.source) {
-        case "proxy":
-          appendLog(logData.data, proxyLogs);
-          break;
-        case "upstream":
-          appendLog(logData.data, upstreamLogs);
-          break;
-      }
       break;
     }
 
@@ -260,6 +239,11 @@ interface ModelListRecord {
   name?: string;
   description?: string;
   capabilities?: Model["capabilities"];
+  architecture?: {
+    input_modalities?: string[];
+    output_modalities?: string[];
+  };
+  context_length?: number;
   meta?: {
     llamaswap?: {
       type?: PlaygroundModelType | "alias";
@@ -311,6 +295,11 @@ async function loadPlaygroundModels(request: number): Promise<Model[]> {
           playgroundType,
           aliases: [...(aliasesByModel.get(record.id) ?? [])],
           capabilities: record.capabilities,
+          modalities: {
+            in: record.architecture?.input_modalities ?? [],
+            out: record.architecture?.output_modalities ?? [],
+          },
+          context_length: record.context_length,
           strategy: metadata?.strategy,
           targets: metadata?.targets ?? [],
           spillover: metadata?.spillover,
@@ -353,6 +342,7 @@ export async function getActivity(params: {
   sort?: string;
   order?: "asc" | "desc";
   filters?: ActivityFilters;
+  srcPrefix?: string;
 } = {}): Promise<ActivityPage> {
   const query = new URLSearchParams();
   if (params.model) query.set("model", params.model);
@@ -360,6 +350,7 @@ export async function getActivity(params: {
   if (params.limit) query.set("limit", String(params.limit));
   if (params.sort) query.set("sort", params.sort);
   if (params.order) query.set("order", params.order);
+  if (params.srcPrefix) query.set("src_prefix", params.srcPrefix);
   // Drawer filters only ever add id bounds, so they never conflict with a
   // model pinned above. The API also accepts repeated "model" params and
   // start/end timestamps, which no UI control currently produces.
@@ -371,6 +362,16 @@ export async function getActivity(params: {
     throw new Error(`Failed to fetch activity: ${response.status}`);
   }
   return await response.json();
+}
+
+export async function fetchTailcatStatus(): Promise<TailcatStatus> {
+  const response = await fetch("/api/tailcat");
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Tailcat status: ${response.status}`);
+  }
+  const status = await response.json() as TailcatStatus;
+  tailcatStatus.set(status);
+  return status;
 }
 
 export async function getActivityStats(model?: string): Promise<ActivityStatsData> {

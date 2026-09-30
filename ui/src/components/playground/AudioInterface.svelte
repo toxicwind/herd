@@ -23,6 +23,7 @@
   let copied = $state(false);
 
   const ACCEPTED_FORMATS = ['.mp3', '.wav', '.ogg'];
+  const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
   let canTranscribe = $derived(selectedFile !== null && $selectedModelStore !== "" && !isTranscribing);
 
@@ -31,6 +32,10 @@
 
     if (!ACCEPTED_FORMATS.includes(ext)) {
       return { valid: false, error: 'Invalid file type. Accepted: MP3, WAV, OGG' };
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return { valid: false, error: 'File too large. Maximum: 25MB' };
     }
 
     return { valid: true };
@@ -116,7 +121,12 @@
 <div class="flex flex-col h-full">
   <!-- Model selector -->
   <div class="shrink-0 flex flex-wrap gap-2 mb-4">
-    <ModelSelector bind:value={$selectedModelStore} placeholder="Select an audio model..." disabled={isTranscribing} capabilities={["audio_transcriptions"]} />
+    <ModelSelector
+      bind:value={$selectedModelStore}
+      placeholder="Select an audio model..."
+      disabled={isTranscribing}
+      match={{ inputModalities: ["audio"], outputModalities: ["text"] }}
+    />
   </div>
 
   <!-- Empty state for no models configured -->
@@ -174,7 +184,7 @@
           <div>
             <p class="mb-2">Drag and drop an audio file here</p>
             <p class="text-sm">or use the Browse button below</p>
-            <p class="text-xs mt-4">Accepted formats: MP3, WAV, OGG</p>
+            <p class="text-xs mt-4">Accepted formats: MP3, WAV, OGG (max 25MB)</p>
           </div>
         </div>
       {/if}

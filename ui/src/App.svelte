@@ -5,11 +5,13 @@
   import { wrap } from "svelte-spa-router/wrap";
   import AppSidebar from "./components/AppSidebar.svelte";
   import RouteLoadingImpl from "./components/RouteLoading.svelte";
-  import PlaygroundStub from "./routes/PlaygroundStub.svelte";
+  import AlwaysMountedStub from "./routes/AlwaysMountedStub.svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import * as Tooltip from "$lib/components/ui/tooltip/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { Check, ChevronDown } from "@lucide/svelte";
   import {
     activeProfile,
     checkPerformanceEnabled,
@@ -20,6 +22,7 @@
   import { initScreenWidth, initSystemThemeListener, isDarkMode, themeName, appTitle, connectionState } from "./stores/theme";
   import { currentRoute } from "./stores/route";
   import { selectedPlaygroundTab, playgroundTabs } from "./stores/playground";
+  import { sidebarOpen, sidebarWidth } from "./stores/sidebar";
 
   // svelte-spa-router's types predate Svelte 5 (loadingComponent wants the
   // old class-component ComponentType); the cast is safe since Router.svelte
@@ -32,7 +35,8 @@
   // placeholder instead of a blank/white flash.
   const routes = {
     "/": wrap({ asyncComponent: () => import("./routes/Activity.svelte"), loadingComponent: RouteLoading }),
-    "/playground": PlaygroundStub,
+    "/playground": AlwaysMountedStub,
+    "/help": AlwaysMountedStub,
     "/models": wrap({ asyncComponent: () => import("./routes/ModelsDash.svelte"), loadingComponent: RouteLoading }),
     "/models/:id": wrap({ asyncComponent: () => import("./routes/ModelDetail.svelte"), loadingComponent: RouteLoading }),
     "/logs": wrap({ asyncComponent: () => import("./routes/LogViewer.svelte"), loadingComponent: RouteLoading }),
@@ -40,19 +44,31 @@
     "/settings": wrap({ asyncComponent: () => import("./routes/Settings.svelte"), loadingComponent: RouteLoading }),
     "/performance": wrap({ asyncComponent: () => import("./routes/Performance.svelte"), loadingComponent: RouteLoading }),
     "/hardware": wrap({ asyncComponent: () => import("./routes/Hardware.svelte"), loadingComponent: RouteLoading }),
+    "/tailcat": wrap({ asyncComponent: () => import("./routes/Tailcat.svelte"), loadingComponent: RouteLoading }),
+    "/surfaces": wrap({ asyncComponent: () => import("./routes/Surfaces.svelte"), loadingComponent: RouteLoading }),
     "*": wrap({ asyncComponent: () => import("./routes/Activity.svelte"), loadingComponent: RouteLoading }),
   };
 
   const routeTitles: Record<string, string> = {
     "/": "Activity",
     "/playground": "Playground",
+    "/help": "Help",
     "/models": "Models",
     "/activity": "Activity",
     "/logs": "Logs",
     "/settings": "Settings",
     "/performance": "Performance",
     "/hardware": "Hardware",
+    "/tailcat": "Tailcat",
+    "/surfaces": "Surfaces",
   };
+
+  // The phone header is tight (sidebar button, title, profile picker), so the
+  // Playground's tab picker there shows the tab name alone rather than the
+  // full "Playground / Chat", which would truncate to nothing useful.
+  let playgroundTabLabel = $derived(
+    playgroundTabs.find((t) => t.id === $selectedPlaygroundTab)?.label ?? "Playground"
+  );
 
   let sectionTitle = $derived.by(() => {
     if ($currentRoute === "/playground") {
@@ -106,11 +122,13 @@
     document.title = `${icon} ${$appTitle}`;
   });
 
-  // Playground is always mounted (rather than routed) so it keeps its state
-  // when the user navigates away, but it's still lazy-loaded on app start so
-  // its dependencies (chat markdown/KaTeX/highlight.js rendering) don't block
-  // the initial page load.
+  // Playground and Help are always mounted (rather than routed) so they keep
+  // their state when the user navigates away -- a chat that is still streaming
+  // survives a look at the logs. Both are still lazy-loaded on app start so
+  // their dependencies (chat markdown/KaTeX/highlight.js rendering) don't
+  // block the initial page load.
   let PlaygroundComponent = $state<Component | null>(null);
+  let HelpComponent = $state<Component | null>(null);
 
   onMount(() => {
     const cleanupScreenWidth = initScreenWidth();
@@ -119,6 +137,9 @@
     checkPerformanceEnabled();
     import("./routes/Playground.svelte").then((m) => {
       PlaygroundComponent = m.default;
+    });
+    import("./routes/Help.svelte").then((m) => {
+      HelpComponent = m.default;
     });
 
     return () => {
@@ -130,7 +151,12 @@
 </script>
 
 <Tooltip.Provider>
-  <Sidebar.Provider>
+  <Sidebar.Provider
+    open={$sidebarOpen}
+    onOpenChange={(v) => sidebarOpen.set(v)}
+    width={$sidebarWidth}
+    onWidthChange={(w) => sidebarWidth.set(w)}
+  >
     <AppSidebar />
     <Sidebar.Inset class="h-screen min-w-0 overflow-hidden">
       <header
@@ -138,7 +164,33 @@
       >
         <Sidebar.Trigger class="-ml-1" />
         <Separator orientation="vertical" class="mr-2 !h-4" />
-        <h2 class="truncate pb-0 text-sm font-semibold">{sectionTitle}</h2>
+        {#if $currentRoute === "/playground"}
+          <!-- Phones hide the Playground's tab strip so the full height goes to
+               the tab itself, so the header title doubles as the tab picker
+               there. Wider screens keep the strip and a plain title. -->
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="hover:bg-muted -mx-1 flex min-w-0 items-center gap-1 rounded-md px-1 py-1 sm:hidden"
+              aria-label="Switch playground tab"
+            >
+              <span class="truncate text-sm font-semibold">{playgroundTabLabel}</span>
+              <ChevronDown class="text-muted-foreground size-4 shrink-0" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start" class="min-w-44">
+              {#each playgroundTabs as tab (tab.id)}
+                <DropdownMenu.Item class="gap-2 py-2 text-base" onSelect={() => selectedPlaygroundTab.set(tab.id)}>
+                  <Check
+                    class="size-4 {$selectedPlaygroundTab === tab.id ? '' : 'invisible'}"
+                  />
+                  {tab.label}
+                </DropdownMenu.Item>
+              {/each}
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+          <h2 class="hidden truncate pb-0 text-sm font-semibold sm:block">{sectionTitle}</h2>
+        {:else}
+          <h2 class="truncate pb-0 text-sm font-semibold">{sectionTitle}</h2>
+        {/if}
         {#if $profiles.length > 0}
           <div class="ml-auto flex items-center gap-2">
             <span class="text-muted-foreground hidden text-xs sm:inline">Profile</span>
@@ -173,7 +225,14 @@
             <RouteLoading />
           {/if}
         </div>
-        <div class="h-full" class:hidden={$currentRoute === "/playground"}>
+        <div class="h-full" class:hidden={$currentRoute !== "/help"}>
+          {#if HelpComponent}
+            <HelpComponent />
+          {:else}
+            <RouteLoading />
+          {/if}
+        </div>
+        <div class="h-full" class:hidden={$currentRoute === "/playground" || $currentRoute === "/help"}>
           <Router {routes} on:routeLoaded={handleRouteLoaded} />
         </div>
       </main>

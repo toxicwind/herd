@@ -50,7 +50,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../internal/server/ui_dist",
+    outDir: "dist",
     assetsDir: "assets",
     // The playground chunk (markdown/KaTeX/highlight.js) is deferred and
     // loaded only after initial mount, so its size doesn't affect first paint.

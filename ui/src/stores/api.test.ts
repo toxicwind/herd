@@ -5,6 +5,8 @@ import {
   activityRevision,
   fetchPlaygroundModels,
   fetchProfiles,
+  fetchTailcatStatus,
+  getActivity,
   getHardware,
   handleAPIEventMessage,
   hasListedModels,
@@ -16,6 +18,7 @@ import {
   profiles,
   selectorModels,
   setActiveProfile,
+  tailcatStatus,
   uiConfig,
 } from "./api";
 
@@ -25,6 +28,28 @@ afterEach(() => {
   playgroundModels.set([]);
   profiles.set([]);
   activeProfile.set(null);
+  tailcatStatus.set({ enabled: false, address: "", models: [] });
+});
+
+describe("tailcat api", () => {
+  it("fetches status and publishes it for conditional navigation", async () => {
+    const status = { enabled: true, address: "tcCaseSensitiveToken", models: ["chat"] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => status }));
+
+    await expect(fetchTailcatStatus()).resolves.toEqual(status);
+    expect(fetch).toHaveBeenCalledWith("/api/tailcat");
+    expect(get(tailcatStatus)).toEqual(status);
+  });
+
+  it("requests literal Tailcat source-prefix pagination", async () => {
+    const page = { data: [], page: 2, limit: 10, total: 0, total_pages: 0 };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => page }));
+
+    await getActivity({ srcPrefix: "tc:", page: 2, limit: 10, sort: "src", order: "asc" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/metrics/activity?page=2&limit=10&sort=src&order=asc&src_prefix=tc%3A"
+    );
+  });
 });
 
 describe("hardware api", () => {
@@ -52,6 +77,29 @@ describe("hardware api", () => {
 });
 
 describe("api store event handling", () => {
+  it("anchors model uptime to the browser clock on receipt", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T12:00:00Z"));
+    try {
+      handleAPIEventMessage(
+        JSON.stringify({
+          type: "modelStatus",
+          data: JSON.stringify([
+            // readySince is an hour in the future, as a server clock that runs
+            // ahead would report it; uptimeMs is what the UI counts from.
+            { id: "ready", state: "ready", readySince: "2026-09-26T13:00:00Z", uptimeMs: 90_000 },
+            { id: "stopped", state: "stopped" },
+          ]),
+        })
+      );
+      const byId = Object.fromEntries(get(models).map((m) => [m.id, m]));
+      expect(byId.ready.readyAt).toBe(Date.parse("2026-09-26T12:00:00Z") - 90_000);
+      expect(byId.stopped.readyAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("parses inflight request entries", () => {
     inFlightRequests.set(0);
     inflightRequestEntries.set([]);
@@ -196,6 +244,7 @@ describe("api store event handling", () => {
             id: "real",
             name: "Real",
             capabilities: { vision: true },
+            architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
             meta: { llamaswap: { type: "model", aliases: ["variant", "alternate"] } },
           },
           {
@@ -233,7 +282,12 @@ describe("api store event handling", () => {
     expect(get(playgroundModels).find((model) => model.id === "real")).toMatchObject({
       aliases: ["variant", "alternate"],
       capabilities: { vision: true },
+      modalities: { in: ["text", "image"], out: ["text"] },
       playgroundType: "model",
+    });
+    // Models without an architecture block report no modalities at all.
+    expect(get(playgroundModels).find((model) => model.id === "remote/remote-model")).toMatchObject({
+      modalities: { in: [], out: [] },
     });
     expect(get(playgroundModels).find((model) => model.id === "remote/remote-model")).toMatchObject({
       peerID: "remote",

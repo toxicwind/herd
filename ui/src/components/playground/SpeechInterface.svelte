@@ -12,6 +12,7 @@
   import { RefreshCw, Download } from "@lucide/svelte";
   import { playgroundSessionHeaders } from "../../lib/playgroundSession";
   import { isSubmitEnter } from "../../lib/ime";
+import { api } from "../../lib/apiBase";
 
   const iface = createPlaygroundInterface("playground-speech-model", playgroundStores.speechGenerating);
   const selectedModelStore = iface.selectedModel;
@@ -100,7 +101,7 @@
     isLoadingVoices = true;
 
     try {
-      const response = await fetch(`/v1/audio/voices?model=${encodeURIComponent(model)}`, {
+      const response = await fetch(api(`/v1/audio/voices?model=${encodeURIComponent(model)}`), {
         cache: "no-store",
         headers: playgroundSessionHeaders,
       });
@@ -222,7 +223,12 @@
 <div class="flex flex-col h-full">
   <!-- Model and voice selectors -->
   <div class="shrink-0 flex gap-2 mb-4">
-    <ModelSelector bind:value={$selectedModelStore} placeholder="Select a speech model..." disabled={isGenerating} capabilities={["audio_speech"]} />
+    <ModelSelector
+      bind:value={$selectedModelStore}
+      placeholder="Select a speech model..."
+      disabled={isGenerating}
+      match={{ inputModalities: ["text"], outputModalities: ["audio"] }}
+    />
     <div class="flex gap-2">
       <Select.Root
         type="single"

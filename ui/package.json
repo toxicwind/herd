@@ -7,7 +7,6 @@
     "start": "vite",
     "build": "vite build --emptyOutDir",
     "preview": "vite preview",
-    "agent": "tsx src/cli/docsAgent.ts",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -28,13 +27,11 @@
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.2.2",
     "tailwindcss": "^4.1.8",
-    "tsx": "^4.23.12",
     "tw-animate-css": "^1.4.0",
     "typescript": "~5.8.3",
     "vite": "^8.0.0",
     "vite-plugin-compression2": "^2.5.1",
-    "vitest": "^4.1.0",
-    "yaml": "^2.9.0"
+    "vitest": "^4.1.0"
   },
   "dependencies": {
     "@tanstack/table-core": "^8.21.3",
@@ -49,6 +46,8 @@
     "remark-rehype": "^11.1.2",
     "svelte-spa-router": "^4.0.1",
     "unified": "^11.0.5",
-    "unist-util-visit": "^5.1.0"
-  }
+    "unist-util-visit": "^5.1.0",
+    "yaml": "^2.9.1"
+  },
+  "description": "Ranch dashboard: the herd + flock control UI (Svelte). Ripped out of herd 2026-09-21."
 }
